@@ -13,7 +13,7 @@ from datetime import datetime
 CLIENT_ID = "1105569288"
 ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiZTkxNWVhbjUiLCJicm9hZGNhc3RfZmxhZyI6dHJ1ZSwiZXhwIjoxNzg0MTQzMzQ1LCJ0b2tlbkNvbnN1bWVyVHlwZSI6IlBBUlRORVIiLCJkaGFuQ2xpZW50SWQiOiIxMTA1NTY5Mjg4In0.q_EuFDO361Ugs1mxmW5pve32XtfIAkeZQ9yhSIK4PuuwTwoa7cSDYzokXTF9EUWgYFg2Qjz32G9hDz8nvOW8IQ"
 # உங்களுடைய டெலிகிராம் விபரங்கள் (முன்பே சரியாக இருந்தது)
-TELEGRAM_BOT_TOKEN = "8911103845:AAFY1jtuAgjdV0qPAR1hz9K2zmYcoBWp4"
+TELEGRAM_BOT_TOKEN = "8775909178:AAG6jxKUDpkkbn951Q8GXAAVwIGCdUBpAmQ"
 TELEGRAM_CHAT_ID = "8479748092"
 
 # ------------------------------------------
