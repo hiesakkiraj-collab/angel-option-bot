@@ -11,8 +11,7 @@ from datetime import datetime
 # ==========================================
 # இங்கே உங்களுடைய உண்மையான Dhan விபரங்களை உள்ளீடு செய்யவும்
 CLIENT_ID = "1105569288"
-ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzg0MTQyNTkzLCJpYXQiOjE3ODQwNTYxOTMsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTA1NTY5Mjg4In0.zLZOd7qRCdqJZYnXGBgze0GqCnwWO33N0_ZpHSSnJT5isjWSqaBZbPBH3wElOUPTEOf6hqLqKQllAi18mx4cOQ"
-
+ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiZTkxNWVhbjUiLCJicm9hZGNhc3RfZmxhZyI6dHJ1ZSwiZXhwIjoxNzg0MTQzMzQ1LCJ0b2tlbkNvbnN1bWVyVHlwZSI6IlBBUlRORVIiLCJkaGFuQ2xpZW50SWQiOiIxMTA1NTY5Mjg4In0.q_EuFDO361Ugs1mxmW5pve32XtfIAkeZQ9yhSIK4PuuwTwoa7cSDYzokXTF9EUWgYFg2Qjz32G9hDz8nvOW8IQ"
 # உங்களுடைய டெலிகிராம் விபரங்கள் (முன்பே சரியாக இருந்தது)
 TELEGRAM_BOT_TOKEN = "8911103845:AAFY1jtuAgjdV0qPAR1hz9K2zmYcoBWp4"
 TELEGRAM_CHAT_ID = "8479748092"
