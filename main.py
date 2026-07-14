@@ -13,7 +13,7 @@ import threading
 API_KEY = "WW0IXyom"       # உங்க Angel One API Key
 CLIENT_ID = "REEG1358"   # உங்க Angel One Client ID
 PASSWORD = "1995"     # உங்க Angel One Login Password
-TOTP_KEY = "3VEUGQ5YI2IK6AIEUTMVRX3CXE"       # உங்க SmartAPI-ல் இருக்கும் TOTP Secret Key
+TOTP_KEY = "3VEUGQ5YI2IK6AIEUTMVRX3CXE"      # உங்க SmartAPI-ல் இருக்கும் TOTP Secret Key
 
 TELEGRAM_BOT_TOKEN = "8911103845:AAFY1jtuAgjdVOqPAR1hz29K2zmYcoBWp4"
 TELEGRAM_CHAT_ID = "8479748092"
