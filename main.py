@@ -1,7 +1,11 @@
+import os
 import time
 import requests
 from datetime import datetime
 from SmartApi import SmartConnect
+from http.server import SimpleHTTPRequestHandler
+import socketserver
+import threading
 
 # ==========================================
 # உங்களது விபரங்களை இங்கே உள்ளீடு செய்யவும்
@@ -14,7 +18,7 @@ TOTP_KEY = "3VEUGQ5Y12TK6AIEUTMVRX3CXE"       # உங்க SmartAPI-ல் இ
 TELEGRAM_BOT_TOKEN = "8911103845:AAFY1jtuAgjdVOqPAR1hz29K2zmYcoBWp4"
 TELEGRAM_CHAT_ID = "8479748092"
 
-# 210 ஸ்டாக்குகளின் பட்டியல் (உதாரணத்திற்கு சில கொடுக்கப்பட்டுள்ளது, இதில் உங்கள் 210 ஸ்டாக்குகளை சேர்க்கலாம்)
+# 210 ஸ்டாக்குகளின் பட்டியல் (உதாரணத்திற்கு சில கொடுக்கப்பட்டுள்ளது)
 STOCKS_LIST = ["RELIANCE", "TCS", "INFY", "SBIN", "HDFCBANK", "ICICIBANK", "TATAMOTORS"]
 STRIKE_GAP = 50  # ஸ்டாக்கிற்கு ஏத்த மாதிரி இதையும் மாற்றிக்கொள்ளலாம்
 
@@ -41,7 +45,6 @@ def run_pre_market_logic():
     for stock in STOCKS_LIST:
         try:
             # இங்கு Angel One API மூலம் நேற்றைய ஆப்ஷன் செயின் க்ளோசிங் டேட்டா எடுக்கப்படும்
-            # (உதாரண கணக்கீட்டிற்காக மாதிரி வேல்யூக்கள் கொடுக்கப்பட்டுள்ளது, API Response-ல் இருந்து இது மாறும்)
             # உதாரணத்திற்கு SBIN-ன் நேற்றைய Close LTP விபரங்கள்
             call_ltp_close = 171.70 
             put_ltp_close = 158.10
@@ -68,7 +71,6 @@ def monitor_live_market():
             selected_strike = setup["selected_strike"]
             
             # Angel One API மூலம் இந்த குறிப்பிட்ட செலக்ட் செய்யப்பட்ட ஸ்ட்ரைக்கின் LIVE LTP எடுக்கப்படும்
-            # (உதாரணமாக லைவ் மார்க்கெட்டில் வரும் டேட்டா)
             call_ltp_live = 83.50  
             put_ltp_live = 77.35  
             
@@ -103,10 +105,24 @@ def monitor_live_market():
         except Exception as e:
             print(f"Error in Live monitor for {stock}: {e}")
 
+# Render-ன் இலவச வெப் சர்வீஸ் பிளாக் ஆகாமல் ஓடுவதற்கு தேவையான Dummy Server
+def start_dummy_server():
+    port = int(os.environ.get("PORT", 8000))
+    handler = SimpleHTTPRequestHandler
+    # போர்ட் பிஸியாக இருந்தால் ரிலீஸ் செய்ய allow_reuse_address பயன்படுத்துகிறோம்
+    socketserver.TCPServer.allow_reuse_address = True
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        print(f"Dummy web server running on port {port}")
+        httpd.serve_forever()
+
 # முதன்மை இயக்கம் (Execution Control)
 if __name__ == "__main__":
     # 1. முதலில் நேற்றைய க்ளோசிங் டேட்டாவை கணக்கிட்டு ஸ்ட்ரைக்கை லாக் செய்கிறது
     run_pre_market_logic()
+    
+    # Dummy HTTP Server-ஐ ஒரு தனி த்ரெட்டில் (Thread) ரன் செய்கிறோம் (Render-ல் 'Free' பிளான் ஒர்க் ஆக இது அவசியம்)
+    server_thread = threading.Thread(target=start_dummy_server, daemon=True)
+    server_thread.start()
     
     # 2. காலை 9:15 வரை காத்திருந்து பின்னர் லைவ் மார்க்கெட்டை கண்காணிக்கிறது
     while True:
