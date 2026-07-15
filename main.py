@@ -27,12 +27,12 @@ PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
 # Dhan Master CSV-க்கான சரியான காலம்கள் (Standard Mappings)
-COL_TOKEN = "SEM_SMART_TOKEN"         # Dhan-ன் பிரத்யேக செக்யூரிட்டி ஐடி காலம்
-COL_INST_NAME = "SEM_INSTRUMENT_NAME"  # OPTSTK அல்லது OPTIDX
-COL_UNDERLYING = "SEM_TRADING_SYMBOL"  # Trading Symbol (e.g., SBIN-Jul2026-1030-CE)
-COL_STRIKE = "SEM_STRIKE_PRICE"        # Strike Price
-COL_OPTION_TYPE = "SEM_OPTION_TYPE"    # CE அல்லது PE
-COL_CLOSE = "SEM_CUSTOM_CLOSE"         # முந்தைய நாளின் முடிவு விலை
+COL_TOKEN = "SEM_SMART_TOKEN"         
+COL_INST_NAME = "SEM_INSTRUMENT_NAME"  
+COL_UNDERLYING = "SEM_TRADING_SYMBOL"  
+COL_STRIKE = "SEM_STRIKE_PRICE"        
+COL_OPTION_TYPE = "SEM_OPTION_TYPE"    
+COL_CLOSE = "SEM_CUSTOM_CLOSE"         
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -66,7 +66,7 @@ def download_dhan_scrip_master():
             
             print("Dhan Scrip Master Downloaded Successfully!")
             
-            # டைனமிக் முறையில் காலம் பெயர்களைக் கண்டறிதல் (இணைப்புத் தோல்வியைத் தடுக்க)
+            # டைனமிக் முறையில் காலம் பெயர்களைக் கண்டறிதல்
             for col in df.columns:
                 col_upper = col.upper()
                 if "SMART_TOKEN" in col_upper or "SEM_SMART_TOKEN" in col_upper or col_upper == "SECURITY_ID":
@@ -91,7 +91,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 4. Security ID தேடுதல் (துல்லியமான தேடுதல் முறை)
+# 4. Security ID தேடுதல் (பாதுகாப்பான ஸ்ட்ரிங்-டூ-ஃப்ளோட் தேடுதல் முறை)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, target_strike, option_type):
     global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
@@ -99,7 +99,6 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         return None, 0.0, target_strike
     
     try:
-        # காலம் பெயர்கள் காலியாக இல்லை என்பதை உறுதிப்படுத்துகிறோம்
         token_col = COL_TOKEN if COL_TOKEN in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[0]
         inst_col = COL_INST_NAME if COL_INST_NAME in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[1]
         underlying_col = COL_UNDERLYING if COL_UNDERLYING in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[2]
@@ -117,10 +116,9 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         if df_filter.empty:
             return None, 0.0, target_strike
 
-        # 2. NaN மதிப்புகளை நீக்கிவிட்டு ஸ்ட்ரைக்கை எண்களாக மாற்றுகிறோம்
-        df_filter = df_filter.dropna(subset=[token_col, strike_col])
+        # 2. 'BSE' போன்ற டெக்ஸ்ட் பிழைகளைத் தவிர்க்க errors='coerce' பயன்படுத்தி எண்களாக மாற்றுகிறோம்
         df_filter[strike_col] = pd.to_numeric(df_filter[strike_col], errors='coerce')
-        df_filter = df_filter.dropna(subset=[strike_col])
+        df_filter = df_filter.dropna(subset=[token_col, strike_col])
         
         # 3. நம்முடைய டார்கெட் விலைக்கு (1030) மிக அருகில் உள்ள ஸ்ட்ரைக்கை கண்டறிகிறோம்
         df_filter['strike_diff'] = (df_filter[strike_col] - float(target_strike)).abs()
@@ -135,8 +133,10 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
                 
             security_id = int(float(security_id_raw))
             
+            # Close பிரைஸிலும் பிழைகள் வராமல் இருக்க செக் செய்கிறோம்
             close_raw = row.get(close_col, 0.0)
-            close_price = float(close_raw) if not pd.isna(close_raw) and close_raw is not None else 0.0
+            close_price = pd.to_numeric(close_raw, errors='coerce')
+            close_price = float(close_price) if not pd.isna(close_price) else 0.0
             
             strike_found = float(row.get(strike_col, target_strike))
             
@@ -214,11 +214,10 @@ def monitor_live_market():
         setup = PRE_MARKET_SELECTED_STRIKES["SBIN"]
         selected_strike = setup["selected_strike"]
         
-        # Dhan API மூலம் நேரலை விலையைப் பெறுதல்
         call_ltp_live = get_dhan_live_ltp(setup["call_security_id"])
         put_ltp_live = get_dhan_live_ltp(setup["put_security_id"])
         
-        # மார்க்கெட் முடிந்த நேரத்தில் கணக்கீடு சரிபார்க்க தோராயமான பேக்அப் டேட்டா (Testing Fallback)
+        # Testing Fallback
         if call_ltp_live == 0.0:
             call_ltp_live = 15.0
         if put_ltp_live == 0.0:
@@ -226,28 +225,21 @@ def monitor_live_market():
             
         gap = STRIKE_GAPS["SBIN"]
         
-        # Rule 1 & 2: Call-Put LTP Difference
         ltp_difference = abs(call_ltp_live - put_ltp_live)
-        
-        # Rule 3: Calculate Average and round to nearest Strike Gap (10)
         avg_ltp = (call_ltp_live + put_ltp_live) / 2
         rounded_value = round(avg_ltp / gap) * gap
         
-        # Rule 4: Call Strike & Put Strike கணக்கீடு
         call_strike = selected_strike - rounded_value
         put_strike = selected_strike + rounded_value
         
-        # Rule 5: Compare LTP and Calculate Adjusted Value
         if put_ltp_live > call_ltp_live:
             adjusted_value = selected_strike - ltp_difference
         else:
             adjusted_value = selected_strike + ltp_difference
             
-        # Rule 6: Calculate Call/Put Differences
         call_diff = adjusted_value - call_strike
         put_diff = put_strike - adjusted_value
         
-        # Rule 7: BUY Entry Trigger & Stop Loss System
         trigger_value = rounded_value * 2
         
         # 🟢 1. CE BUY SIGNAL GENERATION
@@ -270,7 +262,6 @@ def monitor_live_market():
                         f"ℹ️ _Live LTP: CE {call_ltp_live} | PE {put_ltp_live}_"
             send_telegram(alert_msg)
             
-        # தினசரி கால்குலேஷன் ரிப்போர்ட்டை மட்டும் இப்போதைக்கு டெஸ்ட் செய்ய உடனே டெலிகிராமுக்கு அனுப்புகிறது
         test_report = f"📊 *DHAN LIVE CALCULATOR REPORT: SBIN*\n" \
                       f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n" \
                       f"🎯 *Selected Strike:* {selected_strike}\n" \
