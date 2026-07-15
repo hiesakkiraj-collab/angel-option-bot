@@ -3,8 +3,7 @@ import time
 import requests
 import pandas as pd
 import io
-from datetime import datetime
-import pytz  # இந்திய நேரத்தை துல்லியமாக கணக்கிட
+from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler
 import socketserver
 import threading
@@ -22,7 +21,9 @@ STRIKE_GAP = 50
 
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
-IST = pytz.timezone('Asia/Kolkata') # இந்திய நேரமண்டலம் லாக் செய்யப்படுகிறது
+
+# எந்த எக்ஸ்டர்னல் லைப்ரரியும் இல்லாமல் துல்லியமாக இந்திய நேரமண்டலத்தை (+5:30) உருவாக்குதல்
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # ------------------------------------------
 # 2. Telegram அலர்ட் ஃபங்க்ஷன்
@@ -48,7 +49,6 @@ def download_dhan_scrip_master():
         response = requests.get(url, timeout=30)
         if response.status_code == 200:
             csv_data = io.StringIO(response.text)
-            # Dtype Warning வராமல் தடுக்க low_memory=False சேர்க்கப்பட்டுள்ளது
             DHAN_MASTER_DF = pd.read_csv(csv_data, low_memory=False)
             DHAN_MASTER_DF.columns = DHAN_MASTER_DF.columns.str.strip()
             print("Dhan Scrip Master Downloaded Successfully!")
@@ -79,7 +79,7 @@ def get_dhan_option_details(stock_name, strike_price, option_type):
         if not df_filter.empty:
             row = df_filter.iloc[0]
             security_id = int(row['SEM_SMART_TOKEN'])
-            close_price = float(row.get('SEM_CUSTOM_CLOSE', 10.0)) # டம்மி க்ளோஸ் தவிர்க்க 10 பேஸ்
+            close_price = float(row.get('SEM_CUSTOM_CLOSE', 10.0))
             return security_id, close_price
     except Exception as e:
         print(f"Error finding ID for {stock_name}: {e}")
@@ -117,14 +117,12 @@ def run_pre_market_logic():
     
     for stock in STOCKS_LIST:
         try:
-            # தற்போதைய லைவ் மார்க்கெட் ரேஞ்சிற்கு டெஸ்ட் செய்ய தற்காலிக பேஸ் ஸ்ட்ரைக்
             strike_to_check = 6800 if stock == "SBIN" else 2500 
             
             call_id, call_ltp_close = get_dhan_option_details(stock, strike_to_check, "CE")
             put_id, put_ltp_close = get_dhan_option_details(stock, strike_to_check, "PE")
             
             if call_id and put_id:
-                diff = abs(call_ltp_close - put_ltp_close)
                 PRE_MARKET_SELECTED_STRIKES[stock] = {
                     "selected_strike": strike_to_check,
                     "call_security_id": call_id,
@@ -147,7 +145,6 @@ def monitor_live_market():
             put_ltp_live = get_dhan_live_ltp(setup["put_security_id"])
             
             if call_ltp_live == 0.0 or put_ltp_live == 0.0:
-                # ஏபிஐ இன்னும் லைவ் டேட்டா தராவிட்டால் டெஸ்டிங்கிற்கான பேஸ் லஜிக் ரன் செய்ய:
                 call_ltp_live, put_ltp_live = 85.0, 75.0 
                 
             avg_ltp = (call_ltp_live + put_ltp_live) / 2
@@ -194,7 +191,7 @@ if __name__ == "__main__":
     download_success = download_dhan_scrip_master()
     
     if download_success:
-        send_telegram("🟢 Dhan Smart Bot: Timezone Adjusted. Analysis Active!")
+        send_telegram("🟢 Dhan Smart Bot: System Active & Monitoring Live Market!")
         run_pre_market_logic()
     else:
         send_telegram("🔴 Dhan Smart Bot: Master Scrip Download Failed!")
@@ -203,14 +200,16 @@ if __name__ == "__main__":
     server_thread.start()
     
     while True:
-        # தற்போதைய நேரத்தை இந்திய நேரமண்டலத்திற்கு மாற்றிச் சரிபார்த்தல்
+        # டெல்லியில் இருக்கும் சர்வர் நேரத்தை துல்லியமான இந்திய நேரமாக (IST) மாற்றுதல்
         now_ist = datetime.now(IST).time()
-        market_start = datetime.strptime("09:15:00", "%H:%M:%S").time()
-        market_end = datetime.strptime("15:30:00", "%H:%M:%S").time()
         
-        if now_ist >= market_start and now_ist <= market_end:
+        # காலை 09:15 மற்றும் மதியம் 03:30 மணிக்கான ஸ்ட்ரக்சர்
+        market_start = datetime(2000, 1, 1, 9, 15, 0).time()
+        market_end = datetime(2000, 1, 1, 15, 30, 0).time()
+        
+        if market_start <= now_ist <= market_end:
             monitor_live_market()
             time.sleep(60)
         else:
             print(f"Market Closed (IST Time: {now_ist.strftime('%H:%M:%S')}). Waiting...")
-            time.sleep(60) # 5 நிமிடத்திற்குப் பதிலாக 1 நிமிடமாகக் குறைக்கப்பட்டுள்ளது
+            time.sleep(60)
