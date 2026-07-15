@@ -49,11 +49,10 @@ def download_dhan_scrip_master():
         response = requests.get(url, timeout=30)
         if response.status_code == 200:
             csv_data = io.StringIO(response.text)
-            DHAN_MASTER_DF = pd.read_csv(csv_data, low_memory=False)
-            # காலம் பெயர்களில் இருக்கும் ஸ்பேஸ்களை முழுமையாக நீக்குதல்
+            # காலத்தின் பெயர்களில் இருக்கும் BOM குறியீடுகளை நீக்க utf-8-sig குறியீட்டைப் பயன்படுத்துகிறோம்
+            DHAN_MASTER_DF = pd.read_csv(csv_data, low_memory=False, encoding='utf-8-sig')
             DHAN_MASTER_DF.columns = DHAN_MASTER_DF.columns.str.strip()
             print("Dhan Scrip Master Downloaded Successfully!")
-            print("Columns in CSV:", list(DHAN_MASTER_DF.columns)[:15]) # செக்கிங்கிற்காக லாக்ஸில் காலம் பிரிண்ட் ஆகும்
             return True
         else:
             print("Failed to download Scrip Master from Dhan.")
@@ -63,41 +62,40 @@ def download_dhan_scrip_master():
         return False
 
 # ------------------------------------------
-# 4. Security ID மற்றும் Close LTP தேடுதல் (Dynamic Auto-Fallback)
+# 4. Security ID மற்றும் Close LTP தேடுதல் (Index-based Fail-Safe)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, strike_price, option_type):
     global DHAN_MASTER_DF
     if DHAN_MASTER_DF is None:
-        return None, 0.0
-    
-    # மாஸ்டர் ஃபைலில் SEM_SMART_TOKEN அல்லது SEM_TOKEN எது இருந்தாலும் எடுக்கும்படி மாற்றுதல்
-    token_col = 'SEM_SMART_TOKEN' if 'SEM_SMART_TOKEN' in DHAN_MASTER_DF.columns else 'SEM_TOKEN'
+        return None, 0.0, strike_price
     
     try:
-        # 1. நாம் கொடுத்த குறிப்பிட்ட ஸ்ட்ரைக்கில் தேடுதல்
-        df_filter = DHAN_MASTER_DF[
-            (DHAN_MASTER_DF['SEM_INSTRUMENT_NAME'] == 'OPTSTK') & 
-            (DHAN_MASTER_DF['SEM_TRADING_SYMBOL'].str.startswith(stock_name, na=False)) &
-            (DHAN_MASTER_DF['SEM_STRIKE_PRICE'] == float(strike_price)) &
-            (DHAN_MASTER_DF['SEM_OPTION_TYPE'] == option_type)
-        ]
+        # ஃபில்டர் செய்வதற்கான நிபந்தனைகள்
+        inst_mask = DHAN_MASTER_DF['SEM_INSTRUMENT_NAME'] == 'OPTSTK'
+        sym_mask = DHAN_MASTER_DF['SEM_TRADING_SYMBOL'].str.startswith(stock_name, na=False)
+        opt_mask = DHAN_MASTER_DF['SEM_OPTION_TYPE'] == option_type
+        strike_mask = DHAN_MASTER_DF['SEM_STRIKE_PRICE'] == float(strike_price)
         
-        # 2. ஒருவேளை குறிப்பிட்ட ஸ்ட்ரைக் இல்லை என்றால், அந்த ஸ்டாக்கின் முதல் கிடைக்கும் ஆக்டிவ் ஸ்ட்ரைக்கை எடுத்தல்
+        # 1. குறிப்பிட்ட ஸ்ட்ரைக்கில் முதலில் தேடுதல்
+        df_filter = DHAN_MASTER_DF[inst_mask & sym_mask & opt_mask & strike_mask]
+        
+        # 2. ஒருவேளை குறிப்பிட்ட ஸ்ட்ரைக் இல்லை என்றால், அந்த ஸ்டாக்கின் ஏதேனும் ஒரு ஆக்டிவ் ஸ்ட்ரைக்கை எடுத்தல்
         if df_filter.empty:
-            df_filter = DHAN_MASTER_DF[
-                (DHAN_MASTER_DF['SEM_INSTRUMENT_NAME'] == 'OPTSTK') & 
-                (DHAN_MASTER_DF['SEM_TRADING_SYMBOL'].str.startswith(stock_name, na=False)) &
-                (DHAN_MASTER_DF['SEM_OPTION_TYPE'] == option_type)
-            ]
+            df_filter = DHAN_MASTER_DF[inst_mask & sym_mask & opt_mask]
             
         if not df_filter.empty:
             row = df_filter.iloc[0]
-            security_id = int(row[token_col])
+            
+            # காலம் பெயர் குழப்பத்தைத் தவிர்க்க, இன்டெக்ஸ் 0-ல் இருக்கும் SEM_SMART_TOKEN ஐ நேரடியாக எடுக்கிறது
+            security_id = int(row.iloc[0]) 
+            
+            # SEM_CUSTOM_CLOSE காலம் பெயர் இருந்தால் அதிலிருந்து விலை எடுக்கும், இல்லாவிடில் டீஃபால்ட்டாக 10.0 எடுக்கும்
             close_price = float(row.get('SEM_CUSTOM_CLOSE', 10.0))
             strike_found = float(row.get('SEM_STRIKE_PRICE', strike_price))
+            
             return security_id, close_price, strike_found
     except Exception as e:
-        print(f"Error finding ID for {stock_name} (Col: {token_col}): {e}")
+        print(f"Error finding ID for {stock_name}: {e}")
     return None, 0.0, strike_price
 
 # ------------------------------------------
@@ -132,7 +130,7 @@ def run_pre_market_logic():
     
     for stock in STOCKS_LIST:
         try:
-            # டிஃபால்ட் ஸ்ட்ரைக் விலைகள்
+            # டிஃபால்ட் பேஸ் ஸ்ட்ரைக் விலைகள்
             if stock == "SBIN":
                 strike_to_check = 850 
             elif stock == "RELIANCE":
@@ -151,7 +149,7 @@ def run_pre_market_logic():
                     "call_security_id": call_id,
                     "put_security_id": put_id
                 }
-                print(f"Setup Locked for {stock}: Strike {call_strike_actual}")
+                print(f"Setup Locked for {stock}: Strike {call_strike_actual} (ID: {call_id})")
             else:
                 print(f"Could not find any option contracts for {stock}")
         except Exception as e:
@@ -222,7 +220,7 @@ if __name__ == "__main__":
     
     if download_success:
         run_pre_market_logic()
-        send_telegram("🟢 Dhan Smart Bot: Auto-Strike Configuration Active!")
+        send_telegram("🟢 Dhan Smart Bot: Column Index System Active & Monitoring!")
     else:
         send_telegram("🔴 Dhan Smart Bot: Master Scrip Download Failed!")
         
