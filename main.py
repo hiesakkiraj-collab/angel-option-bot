@@ -16,17 +16,14 @@ ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# இப்போதைக்கு கண்காணிக்கப்படும் ஒரே பங்கு SBIN மட்டுமே!
 STOCKS_LIST = ["SBIN"]
-
-# SBIN தோராயமான தற்போதைய சந்தை விலை மற்றும் Strike Gap
 STOCK_APPROX_PRICES = {"SBIN": 1030}
 STRIKE_GAPS = {"SBIN": 10}
 
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
-# Dhan Master CSV-க்கான சரியான காலம்கள் (Standard Mappings)
+# காலம் மேப்பிங்ஸ்
 COL_TOKEN = "SEM_SMART_TOKEN"         
 COL_INST_NAME = "SEM_INSTRUMENT_NAME"  
 COL_UNDERLYING = "SEM_TRADING_SYMBOL"  
@@ -45,7 +42,7 @@ def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"Telegram Error: {e}")
 
@@ -66,7 +63,6 @@ def download_dhan_scrip_master():
             
             print("Dhan Scrip Master Downloaded Successfully!")
             
-            # டைனமிக் முறையில் காலம் பெயர்களைக் கண்டறிதல்
             for col in df.columns:
                 col_upper = col.upper()
                 if "SMART_TOKEN" in col_upper or "SEM_SMART_TOKEN" in col_upper or col_upper == "SECURITY_ID":
@@ -91,7 +87,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 4. Security ID தேடுதல் (பாதுகாப்பான ஸ்ட்ரிங்-டூ-ஃப்ளோட் தேடுதல் முறை)
+# 4. Security ID தேடுதல் (Safe Float conversion)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, target_strike, option_type):
     global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
@@ -106,7 +102,7 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         opt_type_col = COL_OPTION_TYPE if COL_OPTION_TYPE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[4]
         close_col = COL_CLOSE if COL_CLOSE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[5]
 
-        # 1. OPTSTK மற்றும் குறிப்பிட்ட பங்கின் பெயருக்கு ஏற்றவாறு வடிகட்டுகிறோம்
+        # OPTSTK வடிகட்டல்
         df_filter = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[inst_col].isin(['OPTSTK', 'OPTIDX'])) & 
             (DHAN_MASTER_DF[underlying_col].str.contains(stock_name, case=False, na=False)) &
@@ -116,11 +112,10 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         if df_filter.empty:
             return None, 0.0, target_strike
 
-        # 2. 'BSE' போன்ற டெக்ஸ்ட் பிழைகளைத் தவிர்க்க errors='coerce' பயன்படுத்தி எண்களாக மாற்றுகிறோம்
+        # ⭐️ முக்கியத் திருத்தம்: BSE போன்ற டெக்ஸ்டுகளை எண்களாக மாற்றி, வெற்று மதிப்புகளை நீக்குகிறது
         df_filter[strike_col] = pd.to_numeric(df_filter[strike_col], errors='coerce')
         df_filter = df_filter.dropna(subset=[token_col, strike_col])
         
-        # 3. நம்முடைய டார்கெட் விலைக்கு (1030) மிக அருகில் உள்ள ஸ்ட்ரைக்கை கண்டறிகிறோம்
         df_filter['strike_diff'] = (df_filter[strike_col] - float(target_strike)).abs()
         df_sorted = df_filter.sort_values(by='strike_diff')
         
@@ -133,7 +128,6 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
                 
             security_id = int(float(security_id_raw))
             
-            # Close பிரைஸிலும் பிழைகள் வராமல் இருக்க செக் செய்கிறோம்
             close_raw = row.get(close_col, 0.0)
             close_price = pd.to_numeric(close_raw, errors='coerce')
             close_price = float(close_price) if not pd.isna(close_price) else 0.0
@@ -150,9 +144,7 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
 # 5. Live LTP API Call (Dhan Credentials)
 # ------------------------------------------
 def get_dhan_live_ltp(security_id):
-    if not ACCESS_TOKEN or not CLIENT_ID:
-        return 0.0
-    if not security_id:
+    if not ACCESS_TOKEN or not CLIENT_ID or not security_id:
         return 0.0
         
     headers = {
@@ -161,19 +153,15 @@ def get_dhan_live_ltp(security_id):
         'Content-Type': 'application/json'
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
+    payload = {"instruments": [{"exchangeSegment": "NSE_FO", "securityId": str(security_id)}]}
     
-    payload = {
-        "instruments": [{"exchangeSegment": "NSE_FO", "securityId": str(security_id)}]
-    }
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        if response.status_code != 200:
-            return 0.0
-        data = response.json()
-        resp_data = data.get("data", data.get("Data", {}))
-        ltp = float(resp_data.get(str(security_id), {}).get("ltp", 0.0))
-        return ltp
-    except Exception as e:
+        response = requests.post(url, headers=headers, json=payload, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            resp_data = data.get("data", data.get("Data", {}))
+            return float(resp_data.get(str(security_id), {}).get("ltp", 0.0))
+    except Exception:
         pass
     return 0.0
 
@@ -197,12 +185,12 @@ def run_pre_market_logic():
             }
             print(f"✅ Setup Locked for SBIN: Strike {call_strike_actual}")
         else:
-            print(f"❌ Could not find SBIN option contracts in Dhan Master. Call ID: {call_id}, Put ID: {put_id}")
+            print(f"❌ Could not find SBIN contracts. Call: {call_id}, Put: {put_id}")
     except Exception as e:
         print(f"Error in Pre-market setup for SBIN: {e}")
 
 # ------------------------------------------
-# 7. லைவ் கண்காணிப்பு & 7 படிகள் ஃபார்முலா (SBIN மட்டும்)
+# 7. லைவ் கண்காணிப்பு & 7 படிகள் ஃபார்முலா
 # ------------------------------------------
 def monitor_live_market():
     print("Checking Live Market with 7-Step Formula for SBIN...")
@@ -242,7 +230,7 @@ def monitor_live_market():
         
         trigger_value = rounded_value * 2
         
-        # 🟢 1. CE BUY SIGNAL GENERATION
+        # CE BUY SIGNAL
         if call_ltp_live >= trigger_value and put_ltp_live < put_diff:
             alert_msg = f"🟢 **BUY SIGNAL: SBIN** 🟢\n\n" \
                         f"📦 **SBIN {int(call_strike)} CE BUY = {int(trigger_value)}**\n" \
@@ -252,7 +240,7 @@ def monitor_live_market():
                         f"ℹ️ _Live LTP: CE {call_ltp_live} | PE {put_ltp_live}_"
             send_telegram(alert_msg)
             
-        # 🔴 2. PE BUY SIGNAL GENERATION
+        # PE BUY SIGNAL
         elif put_ltp_live >= trigger_value and call_ltp_live < call_diff:
             alert_msg = f"🔴 **BUY SIGNAL: SBIN** 🔴\n\n" \
                         f"📦 **SBIN {int(put_strike)} PE BUY = {int(trigger_value)}**\n" \
@@ -283,28 +271,38 @@ def monitor_live_market():
         print(f"Error in Live monitor for SBIN: {e}")
 
 # ------------------------------------------
-# 8. Web Server
+# 8. Web Server (Port 10000 Fix for Render)
 # ------------------------------------------
 def start_dummy_server():
-    port = int(os.environ.get("PORT", 8000))
+    # ⭐️ Render அனுப்பும் $PORT என்விரான்மென்ட் வேரியபிளை (Default: 10000) துல்லியமாகப் படிக்கிறது
+    port = int(os.environ.get("PORT", 10000))
     handler = SimpleHTTPRequestHandler
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", port), handler) as httpd:
-        httpd.serve_forever()
+    
+    print(f"Starting server on port {port} for Render keep-alive...")
+    try:
+        with socketserver.TCPServer(("", port), handler) as httpd:
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"Server error on port {port}: {e}")
 
 # ------------------------------------------
 # 9. Main Execution
 # ------------------------------------------
 if __name__ == "__main__":
+    # Render போர்ட் ஸ்கேன் டைம்அவுட் ஆகாமல் இருக்க, சர்வரை முதலில் ஸ்டார்ட் செய்ய வேண்டும்!
+    server_thread = threading.Thread(target=start_dummy_server, daemon=True)
+    server_thread.start()
+    
+    # 10 விநாடிகள் சர்வர் ஸ்டார்ட் ஆக இடைவெளி கொடுத்துவிட்டு, மற்ற கோடுகளை ரன் செய்கிறோம்
+    time.sleep(10)
+    
     download_success = download_dhan_scrip_master()
     if download_success:
         run_pre_market_logic()
         send_telegram("🟢 SBIN Option Bot: Connected & Live on Render!")
     else:
         send_telegram("🔴 Dhan API Bot: Master Scrip Download Failed!")
-        
-    server_thread = threading.Thread(target=start_dummy_server, daemon=True)
-    server_thread.start()
     
     while True:
         now_ist = datetime.now(IST).time()
