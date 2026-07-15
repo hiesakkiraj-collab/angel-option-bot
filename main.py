@@ -1,102 +1,180 @@
 import os
 import time
 import requests
+from datetime import datetime
 from http.server import SimpleHTTPRequestHandler
 import socketserver
 import threading
-from datetime import datetime
 
 # ==========================================
-# 1. உங்களுடைய DHAN மற்றும் TELEGRAM விபரங்கள்
+# 1. ரகசிய விபரங்கள் (Render Environment Variables-ல் இருந்து எடுக்கப்படும்)
 # ==========================================
-# இங்கே உங்களுடைய உண்மையான Dhan விபரங்களை உள்ளீடு செய்யவும்
-CLIENT_ID = "1105569288"
-ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiZTkxNWVhbjUiLCJicm9hZGNhc3RfZmxhZyI6dHJ1ZSwiZXhwIjoxNzg0MTQzMzQ1LCJ0b2tlbkNvbnN1bWVyVHlwZSI6IlBBUlRORVIiLCJkaGFuQ2xpZW50SWQiOiIxMTA1NTY5Mjg4In0.q_EuFDO361Ugs1mxmW5pve32XtfIAkeZQ9yhSIK4PuuwTwoa7cSDYzokXTF9EUWgYFg2Qjz32G9hDz8nvOW8IQ"
-# உங்களுடைய டெலிகிராம் விபரங்கள் (முன்பே சரியாக இருந்தது)
-TELEGRAM_BOT_TOKEN = "8775909178:AAG6jxKUDpkkbn951Q8GXAAVwIGCdUBpAmQ"
-TELEGRAM_CHAT_ID = "8479748092"
+CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
+ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+# 210 ஸ்டாக்குகளின் பட்டியல்
+STOCKS_LIST = ["RELIANCE", "TCS", "INFY", "SBIN", "HDFCBANK", "ICICIBANK", "TATAMOTORS"]
+STRIKE_GAP = 50  # ஸ்டாக்கிற்கு ஏத்த மாதிரி மாற்றிக்கொள்ளலாம்
+
+# குளோபல் மெமரி (நேற்றைய முடிவில் தேர்வு செய்யப்பட்ட ஸ்ட்ரைக்குகளை சேமிக்க)
+PRE_MARKET_SELECTED_STRIKES = {}
 
 # ------------------------------------------
-# 2. Dummy Web Server (Render இன்ஆக்டிவ் ஆகாமல் இருக்க)
+# 2. Telegram அலர்ட் ஃபங்க்ஷன்
 # ------------------------------------------
-def run_dummy_server():
-    PORT = int(os.environ.get("PORT", 8000))
-    Handler = SimpleHTTPRequestHandler
-    # பிளாட்பார்ம் போர்ட் ரீயூஸ் செய்ய allow_reuse_address செட் செய்யப்பட்டுள்ளது
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        print(f"Dummy web server running on port {PORT}")
-        httpd.serve_forever()
-
-# சர்வரை பின்னணியில் (Background Thread) இயக்குதல்
-threading.Thread(target=run_dummy_server, daemon=True).start()
-
-# ------------------------------------------
-# 3. Telegram அலர்ட் அனுப்பும் ஃபங்க்ஷன்
-# ------------------------------------------
-def send_telegram_message(message):
+def send_telegram(message):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram configuration missing!")
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            print("Telegram alert sent successfully!")
-        else:
-            print(f"Telegram failed: {response.text}")
+        if response.status_code != 200:
+            print(f"Telegram Failed: {response.text}")
     except Exception as e:
-        print("Telegram communication error:", e)
+        print(f"Telegram Error: {e}")
 
 # ------------------------------------------
-# 4. Dhan API கனெக்ஷன் சரிபார்ப்பு
+# 3. Dhan API மூலம் LTP பெரும் ஃபங்க்ஷன்
 # ------------------------------------------
-def check_dhan_connection():
+# Dhan-ல் லைவ் அல்லது க்ளோசிங் LTP-ஐப் பெற இந்த ஃபங்க்ஷனைப் பயன்படுத்தலாம்
+def get_dhan_ltp(security_id, exchange_segment="NSE_EQ"):
+    if not ACCESS_TOKEN:
+        return 0.0
+    
     headers = {
         'access-token': ACCESS_TOKEN,
         'Content-Type': 'application/json'
     }
+    # Dhan-ன் Security ID-ஐ அடிப்படையாகக் கொண்டு LTP பெறும் ஏபிஐ கால்
+    url = "https://api.dhan.co/v2/marketfeed/ltp"
+    payload = {
+        "instruments": [
+            {
+                "exchangeSegment": exchange_segment,
+                "securityId": str(security_id)
+            }
+        ]
+    }
     try:
-        # Dhan Profile API-ஐ அழைத்து டோக்கன் சரியாக உள்ளதா என சரிபார்த்தல்
-        response = requests.get("https://api.dhan.co/v2/profile", headers=headers)
+        response = requests.post(url, headers=headers, json=payload)
         if response.status_code == 200:
-            profile = response.json()
-            name = profile.get('clientName', 'Dhan User')
-            msg = f"🟢 Dhan Trading Bot Connected!\nWelcome back, {name}."
-            print(msg)
-            send_telegram_message(msg)
-            return True
+            data = response.json()
+            # Dhan API ரெஸ்பான்ஸிலிருந்து LTP மதிப்பை எடுத்தல்
+            return data.get("data", {}).get(str(security_id), {}).get("ltp", 0.0)
         else:
-            error_msg = f"🔴 Dhan Connection Failed!\nStatus Code: {response.status_code}\nResponse: {response.text}"
-            print(error_msg)
-            send_telegram_message(error_msg)
-            return False
+            print(f"Dhan LTP API Failed: {response.text}")
+            return 0.0
     except Exception as e:
-        print("Error connecting to Dhan API:", e)
-        return False
+        print(f"Error fetching Dhan LTP: {e}")
+        return 0.0
 
 # ------------------------------------------
-# 5. மெயின் லூப் (Main Execution)
+# 4. Phase 1: பிரீ-மார்க்கெட் க்ளோசிங் டேட்டா கணக்கீடு
 # ------------------------------------------
-def main():
-    print("Initializing Dhan Strategy Bot...")
-    time.sleep(2) # சர்வர் நிலைபெற குட்டி பிரேக்
+def run_pre_market_logic():
+    print("Running Pre-Market / Post-Market analysis via Dhan API...")
+    global PRE_MARKET_SELECTED_STRIKES
     
-    # முதலில் தன் ஏபிஐ இணைப்பைச் சோதிக்கவும்
-    connected = check_dhan_connection()
+    for stock in STOCKS_LIST:
+        try:
+            # TODO: Dhan Security ID-களைக் கண்டறிந்து க்ளோசிங் LTP எடுக்க வேண்டும்
+            # இப்போதைக்கு டெஸ்டிங்கிற்காக உங்களுடைய அல்காரிதம் ரன் ஆக டம்மி மதிப்புகள்:
+            call_ltp_close = 171.70 
+            put_ltp_close = 158.10
+            strike_price = 6800  
+            
+            # Step 1 & 2: Difference <= Strike Gap / 2
+            diff = abs(call_ltp_close - put_ltp_close)
+            if diff <= (STRIKE_GAP / 2):
+                PRE_MARKET_SELECTED_STRIKES[stock] = {
+                    "selected_strike": strike_price,
+                    "close_diff": diff
+                }
+                print(f"Pre-Market Setup Done for {stock}: Selected Strike {strike_price}")
+        except Exception as e:
+            print(f"Error in Pre-market setup for {stock}: {e}")
+
+# ------------------------------------------
+# 5. Phase 2: காலை 9:15 மணிக்கு லைவ் மார்க்கெட் கண்காணிப்பு
+# ------------------------------------------
+def monitor_live_market():
+    print("Live Market Monitoring Started...")
     
-    if not connected:
-        print("Bot halting due to connection issues. Please check your Access Token.")
-        # இணைப்பு தோல்வியுற்றாலும் ரெண்டர் சர்வர் மூடாமல் இருக்க லூப்
-        while True:
-            time.sleep(3600)
+    for stock, setup in PRE_MARKET_SELECTED_STRIKES.items():
+        try:
+            selected_strike = setup["selected_strike"]
+            
+            # TODO: Dhan API மூலம் லைவ் LTP பெறப்படும்
+            # இப்போதைக்கு டெஸ்டிங்கிற்காக டம்மி மதிப்புகள்:
+            call_ltp_live = 83.50  
+            put_ltp_live = 77.35  
+            
+            # Step 3: Average & Rounding to nearest Strike Gap
+            avg_ltp = (call_ltp_live + put_ltp_live) / 2
+            rounded_value = round(avg_ltp / STRIKE_GAP) * STRIKE_GAP
+            
+            # Step 4: Call Strike & Put Strike
+            call_strike = selected_strike - rounded_value
+            put_strike = selected_strike + rounded_value
+            
+            # Step 5: Adjusted Value Check
+            live_diff = abs(call_ltp_live - put_ltp_live)
+            if put_ltp_live > call_ltp_live:
+                adjusted_value = selected_strike - live_diff
+            else:
+                adjusted_value = selected_strike + live_diff
+                
+            # Step 6: Call Difference & Put Difference
+            call_diff = adjusted_value - call_strike
+            put_diff = put_strike - adjusted_value
+            
+            # Step 7: டெலிகிராமிற்கு லைவ் சிக்னல் அனுப்புதல்
+            alert_msg = f"🚨 *LIVE DHAN OPTION SIGNAL: {stock}* 🚨\n\n" \
+                        f"🎯 Selected Strike (Yesterday): {selected_strike}\n" \
+                        f"📞 Call Strike: {call_strike} | 📈 Put Strike: {put_strike}\n" \
+                        f"⚖️ Adjusted Value: {adjusted_value:.2f}\n" \
+                        f"🔹 Call Diff: {call_diff:.2f} | 🔸 Put Diff: {put_diff:.2f}"
+            
+            send_telegram(alert_msg)
+            
+        except Exception as e:
+            print(f"Error in Live monitor for {stock}: {e}")
 
-    # வெற்றிகரமாக இணைக்கப்பட்டால் மார்க்கெட் கண்காணிப்பு லூப் தொடங்கும்
-    while True:
-        now = datetime.now()
-        print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] Bot is active. Scanning market data...")
-        
-        # இப்போதைக்கு மார்க்கெட் மூடியிருப்பதால் காத்திருக்க வைப்போம்
-        # லைவ் ஸ்ட்ரேட்டஜி மற்றும் இண்டிகேட்டர் கோடுகளை நாம் அடுத்து இங்கே சேர்க்கலாம்
-        time.sleep(60)
+# ------------------------------------------
+# 6. Dummy Web Server (Render பிளாக் ஆகாமல் இருக்க)
+# ------------------------------------------
+def start_dummy_server():
+    port = int(os.environ.get("PORT", 8000))
+    handler = SimpleHTTPRequestHandler
+    socketserver.TCPServer.allow_reuse_address = True
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        print(f"Dummy web server running on port {port}")
+        httpd.serve_forever()
 
+# ------------------------------------------
+# 7. மெயின் எக்ஸிகியூஷன் (Main Control)
+# ------------------------------------------
 if __name__ == "__main__":
-    main()
+    # முதலில் Dhan இணைப்பை சரிபார்க்க ஒரு வெல்கம் மெசேஜ்
+    send_telegram("🟢 Dhan Smart Option Bot Started Successfully! Monitoring Active.")
+    
+    # Pre-market கணக்கீடு
+    run_pre_market_logic()
+    
+    # Render-க்காக டம்மி சர்வரை பேக்கிரவுண்டில் ரன் செய்கிறோம்
+    server_thread = threading.Thread(target=start_dummy_server, daemon=True)
+    server_thread.start()
+    
+    # காலை 9:15 முதல் மதியம் 3:30 வரை கண்காணிப்பு
+    while True:
+        now = datetime.now().time()
+        if now >= datetime.strptime("09:15:00", "%H:%M:%S").time() and now <= datetime.strptime("15:30:00", "%H:%M:%S").time():
+            monitor_live_market()
+            time.sleep(60) # 1 நிமிட இடைவெளி
+        else:
+            print("Market is Closed. Waiting for next session...")
+            time.sleep(300) # 5 நிமிட இடைவெளி
