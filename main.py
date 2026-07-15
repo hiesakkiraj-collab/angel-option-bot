@@ -39,7 +39,7 @@ def send_telegram(message):
         print(f"Telegram Error: {e}")
 
 # ------------------------------------------
-# 3. Dhan Master Scrip டவுன்லோடு & காலம் பெயர்கள் சுத்தம் செய்தல்
+# 3. Dhan Master Scrip டவுன்லோடு
 # ------------------------------------------
 def download_dhan_scrip_master():
     global DHAN_MASTER_DF
@@ -49,26 +49,28 @@ def download_dhan_scrip_master():
         response = requests.get(url, timeout=30)
         if response.status_code == 200:
             csv_data = io.StringIO(response.text)
-            
-            # UTF-8-sig மூலமாக BOM குறியீடுகளை நீக்கி ரீட் செய்கிறோம்
+            # UTF-8-sig மூலம் பைட் ஆர்டர் மார்க்கை நீக்கி லோடு செய்தல்
             df = pd.read_csv(csv_data, low_memory=False, encoding='utf-8-sig')
             
-            # காலம் பெயர்களில் இருக்கும் கண்ணுக்கு தெரியாத ஸ்பெஷல் கேரக்டர் மற்றும் ஸ்பேஸ்களை துல்லியமாக சுத்தம் செய்கிறோம்
-            df.columns = df.columns.str.replace(r'[^\w\s_]', '', regex=True).str.strip()
-            
+            # காலம் பெயர்களை சுத்தப்படுத்துதல்
+            df.columns = df.columns.str.strip().str.replace(r'[^\w\s_]', '', regex=True)
             DHAN_MASTER_DF = df
-            print("Dhan Scrip Master Downloaded & Cleaned Successfully!")
-            print("Cleaned Columns in CSV:", list(DHAN_MASTER_DF.columns)[:10])
+            
+            print("Dhan Scrip Master Downloaded Successfully!")
+            # 🔍 லாக்ஸில் காலம் பெயர்களை அச்சிட்டுச் சரிபார்க்கிறோம்
+            print("--- Actual Columns Found in CSV ---")
+            print(list(DHAN_MASTER_DF.columns)[:15])
+            print("-----------------------------------")
             return True
         else:
             print("Failed to download Scrip Master from Dhan.")
             return False
     except Exception as e:
         print(f"Error downloading Scrip Master: {e}")
-        return False
+    return False
 
 # ------------------------------------------
-# 4. Security ID மற்றும் Close LTP தேடுதல் (Cleaned Columns)
+# 4. Security ID மற்றும் Close LTP தேடுதல் (Failsafe System)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, strike_price, option_type):
     global DHAN_MASTER_DF
@@ -76,27 +78,28 @@ def get_dhan_option_details(stock_name, strike_price, option_type):
         return None, 0.0, strike_price
     
     try:
-        # சுத்தப்படுத்தப்பட்ட காலம் பெயர்கள் இப்போது சரியாக வேலை செய்யும்
+        # 'OPTSTK' மற்றும் ஸ்டாக் பெயரை வைத்து ஃபில்டர் செய்தல்
         df_filter = DHAN_MASTER_DF[
             (DHAN_MASTER_DF['SEM_INSTRUMENT_NAME'] == 'OPTSTK') & 
             (DHAN_MASTER_DF['SEM_TRADING_SYMBOL'].str.startswith(stock_name, na=False)) &
-            (DHAN_MASTER_DF['SEM_STRIKE_PRICE'] == float(strike_price)) &
             (DHAN_MASTER_DF['SEM_OPTION_TYPE'] == option_type)
         ]
         
-        # ஒருவேளை குறிப்பிட்ட ஸ்ட்ரைக் இல்லை என்றால், அந்த ஸ்டாக்கின் முதல் கிடைக்கும் ஆக்டிவ் ஸ்ட்ரைக்கை எடுத்தல்
-        if df_filter.empty:
-            df_filter = DHAN_MASTER_DF[
-                (DHAN_MASTER_DF['SEM_INSTRUMENT_NAME'] == 'OPTSTK') & 
-                (DHAN_MASTER_DF['SEM_TRADING_SYMBOL'].str.startswith(stock_name, na=False)) &
-                (DHAN_MASTER_DF['SEM_OPTION_TYPE'] == option_type)
-            ]
+        # குறிப்பிட்ட ஸ்ட்ரைக் விலை உள்ளதா எனப் பார்த்தல்
+        df_strike = df_filter[df_filter['SEM_STRIKE_PRICE'] == float(strike_price)]
+        if not df_strike.empty:
+            df_filter = df_strike
             
         if not df_filter.empty:
             row = df_filter.iloc[0]
             
-            # மிகச் சரியாக 'SEM_SMART_TOKEN' காலத்தை மட்டும் எடுக்கிறோம்
-            security_id = int(row['SEM_SMART_TOKEN'])
+            # 'SEM_SMART_TOKEN' காலம் பெயர் இருக்கிறதா என்று பார்த்து எடுக்கும், 
+            # இல்லையென்றால் முதல் காலத்தில் இருக்கும் மதிப்பை டோக்கனாக எடுத்துக்கொள்ளும்.
+            if 'SEM_SMART_TOKEN' in DHAN_MASTER_DF.columns:
+                security_id = int(row['SEM_SMART_TOKEN'])
+            else:
+                security_id = int(row.iloc[0]) # Fallback to first column index
+                
             close_price = float(row.get('SEM_CUSTOM_CLOSE', 10.0))
             strike_found = float(row.get('SEM_STRIKE_PRICE', strike_price))
             
@@ -137,7 +140,6 @@ def run_pre_market_logic():
     
     for stock in STOCKS_LIST:
         try:
-            # ஒவ்வொரு பங்கிற்கும் தகுந்த ஸ்ட்ரைக் விலை
             if stock == "SBIN":
                 strike_to_check = 850 
             elif stock == "RELIANCE":
@@ -227,7 +229,7 @@ if __name__ == "__main__":
     
     if download_success:
         run_pre_market_logic()
-        send_telegram("🟢 Dhan Smart Bot: System Active & Monitoring Live Market!")
+        send_telegram("🟢 Dhan Smart Bot: Debug Column Monitoring System Active!")
     else:
         send_telegram("🔴 Dhan Smart Bot: Master Scrip Download Failed!")
         
