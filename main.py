@@ -19,6 +19,17 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 STOCKS_LIST = ["RELIANCE", "TCS", "INFY", "SBIN", "HDFCBANK", "ICICIBANK", "TATAMOTORS"]
 STRIKE_GAP = 50  
 
+# ஒவ்வொரு பங்குக்கும் தற்போதைய தோராயமான மார்க்கெட் விலை (உரிய ஸ்ட்ரைக்குகளைக் கண்டறிய)
+STOCK_APPROX_PRICES = {
+    "RELIANCE": 2500,
+    "TCS": 4100,
+    "INFY": 1600,
+    "SBIN": 840,
+    "HDFCBANK": 1700,
+    "ICICIBANK": 1150,
+    "TATAMOTORS": 950
+}
+
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
@@ -59,39 +70,29 @@ def download_dhan_scrip_master():
             csv_data = io.StringIO(response.text)
             df = pd.read_csv(csv_data, low_memory=False, encoding='utf-8-sig')
             
-            # காலம் பெயர்களை சுத்தப்படுத்துதல்
             df.columns = df.columns.str.strip()
             DHAN_MASTER_DF = df
             
             print("Dhan Scrip Master Downloaded Successfully!")
-            print("Available Columns in CSV:", list(df.columns)[:15])
             
-            # 🔍 மிகத் துல்லியமான டைனமிக் மேப்பிங் (Failsafe Substring Matching)
+            # 🔍 காலம் பெயர்களைத் தானாகத் தேர்ந்தெடுத்தல் (Failsafe Substring Matching)
             for col in df.columns:
                 col_upper = col.upper()
-                
-                # 1. Token Column (SMART, TOKEN, அல்லது SECURITY_ID என்று இருந்தால்)
                 if "SMART" in col_upper or "TOKEN" in col_upper or col_upper == "SECURITY_ID":
                     COL_TOKEN = col
-                # 2. Instrument Column
                 elif "INSTRUMENT" in col_upper or col_upper == "INSTRUMENT":
                     COL_INST_NAME = col
-                # 3. Underlying Symbol Column
                 elif "TRADING_SYMBOL" in col_upper or "UNDERLYING" in col_upper:
                     COL_UNDERLYING = col
-                # 4. Strike Column
                 elif "STRIKE" in col_upper:
                     COL_STRIKE = col
-                # 5. Option Type Column
                 elif "OPTION" in col_upper:
                     COL_OPTION_TYPE = col
-                # 6. Close Column
                 elif "CLOSE" in col_upper or "CUSTOM_CLOSE" in col_upper:
                     COL_CLOSE = col
             
-            # 🚨 பக்கா சேஃப்டி ஃபால்பேக் லாஜிக் (Fallback if mapping fails)
+            # Fallback values
             if not COL_TOKEN and len(df.columns) > 2:
-                # பொதுவாக Dhan CSV-ல் 2வது அல்லது 3வது காலம் தான் டோக்கனாக இருக்கும் (உதாரணமாக குறியீட்டின் அடிப்படையில் 2வது காலம்)
                 COL_TOKEN = df.columns[2]
             
             COL_TOKEN = COL_TOKEN or "SEM_SMART_TOKEN"
@@ -100,14 +101,6 @@ def download_dhan_scrip_master():
             COL_STRIKE = COL_STRIKE or "SEM_STRIKE_PRICE"
             COL_OPTION_TYPE = COL_OPTION_TYPE or "SEM_OPTION_TYPE"
             COL_CLOSE = COL_CLOSE or "SEM_CUSTOM_CLOSE"
-            
-            print("🎯 Dynamic columns mapped successfully:")
-            print(f" - Token Col: {COL_TOKEN}")
-            print(f" - Instrument Col: {COL_INST_NAME}")
-            print(f" - Underlying Col: {COL_UNDERLYING}")
-            print(f" - Strike Price Col: {COL_STRIKE}")
-            print(f" - Option Type Col: {COL_OPTION_TYPE}")
-            print(f" - Close Price Col: {COL_CLOSE}")
             
             return True
         else:
@@ -120,44 +113,43 @@ def download_dhan_scrip_master():
 # ------------------------------------------
 # 4. Security ID மற்றும் Close LTP தேடுதல் (Failsafe Matching)
 # ------------------------------------------
-def get_dhan_option_details(stock_name, strike_price, option_type):
+def get_dhan_option_details(stock_name, target_strike, option_type):
     global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
     if DHAN_MASTER_DF is None:
-        return None, 0.0, strike_price
+        return None, 0.0, target_strike
     
     try:
-        # 1. 'OPTSTK' மற்றும் ஸ்டாக் பெயருடன் தொடங்கும் குறியீடுகளை மட்டும் ஃபில்டர் செய்தல் (.startswith)
+        # OPTSTK மற்றும் ஸ்டாக் பெயருடன் தொடங்குவதை ஃபில்டர் செய்கிறது
         df_filter = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[COL_INST_NAME] == 'OPTSTK') & 
             (DHAN_MASTER_DF[COL_UNDERLYING].str.startswith(stock_name, na=False)) &
             (DHAN_MASTER_DF[COL_OPTION_TYPE] == option_type)
-        ]
+        ].copy()
         
-        # 2. ஸ்ட்ரைக் விலையை ஃப்ளோட்டாக மாற்றி மேட்ச் செய்தல்
+        if df_filter.empty:
+            return None, 0.0, target_strike
+
         df_filter[COL_STRIKE] = pd.to_numeric(df_filter[COL_STRIKE], errors='coerce')
-        df_strike = df_filter[df_filter[COL_STRIKE] == float(strike_price)]
         
-        # ஒருவேளை குறிப்பிட்ட ஸ்ட்ரைக் விலை இல்லை என்றால், முதல் கிடைக்கும் ஒப்பந்தத்தை எடுத்தல்
-        if not df_strike.empty:
-            df_filter = df_strike
+        # டார்கெட் ஸ்ட்ரைக்கிற்கு மிக அருகிலுள்ள உண்மையான ஸ்ட்ரைக் விலையைக் கண்டறிதல்
+        df_filter['strike_diff'] = (df_filter[COL_STRIKE] - float(target_strike)).abs()
+        df_sorted = df_filter.sort_values(by='strike_diff')
+        
+        if not df_sorted.empty:
+            row = df_sorted.iloc[0]
             
-        if not df_filter.empty:
-            row = df_filter.iloc[0]
-            
-            # எரர் வராமல் தடுக்க 'row.get' மூலம் பாதுகாப்பாக டோக்கனை எடுக்கிறோம்
             security_id = row.get(COL_TOKEN)
             if pd.isna(security_id):
-                # Token காலத்தின் பெயர் மாறினால், ரோவின் முதல் மதிப்பை டோக்கனாக எடுக்கவும்
                 security_id = row.iloc[2] if len(row) > 2 else row.iloc[0]
                 
             security_id = int(float(security_id))
-            close_price = float(row.get(COL_CLOSE, 10.0))
-            strike_found = float(row.get(COL_STRIKE, strike_price))
+            close_price = float(row.get(COL_CLOSE, 0.0))
+            strike_found = float(row.get(COL_STRIKE, target_strike))
             
             return security_id, close_price, strike_found
     except Exception as e:
         print(f"Error finding ID for {stock_name}: {e}")
-    return None, 0.0, strike_price
+    return None, 0.0, target_strike
 
 # ------------------------------------------
 # 5. Dhan Live LTP API Call
@@ -191,17 +183,11 @@ def run_pre_market_logic():
     
     for stock in STOCKS_LIST:
         try:
-            if stock == "SBIN":
-                strike_to_check = 850 
-            elif stock == "RELIANCE":
-                strike_to_check = 2500
-            elif stock == "TCS":
-                strike_to_check = 4000
-            else:
-                strike_to_check = 1500
+            # தோராயமான விலையைப் பெற்று அதற்கு அருகிலுள்ள உண்மையான ஸ்ட்ரைக்கை தேடும்
+            target_strike = STOCK_APPROX_PRICES.get(stock, 1000)
             
-            call_id, call_ltp_close, call_strike_actual = get_dhan_option_details(stock, strike_to_check, "CE")
-            put_id, put_ltp_close, put_strike_actual = get_dhan_option_details(stock, strike_to_check, "PE")
+            call_id, call_ltp_close, call_strike_actual = get_dhan_option_details(stock, target_strike, "CE")
+            put_id, put_ltp_close, put_strike_actual = get_dhan_option_details(stock, target_strike, "PE")
             
             if call_id and put_id:
                 PRE_MARKET_SELECTED_STRIKES[stock] = {
@@ -232,8 +218,14 @@ def monitor_live_market():
             call_ltp_live = get_dhan_live_ltp(setup["call_security_id"])
             put_ltp_live = get_dhan_live_ltp(setup["put_security_id"])
             
+            # API வேலை செய்யவில்லை எனில் காட்டும் தகவல்
             if call_ltp_live == 0.0 or put_ltp_live == 0.0:
-                call_ltp_live, put_ltp_live = 85.0, 75.0 
+                alert_msg = f"⚠️ *LIVE DHAN OPTION SIGNAL: {stock}* ⚠️\n\n" \
+                            f"🎯 Base Strike: {selected_strike}\n" \
+                            f"❌ *LTP Data N/A* \n" \
+                            f"💡 _தயவுசெய்து உங்களின் Dhan Access Token சரியாக உள்ளதா எனச் சரிபார்க்கவும்._"
+                send_telegram(alert_msg)
+                continue
                 
             avg_ltp = (call_ltp_live + put_ltp_live) / 2
             rounded_value = round(avg_ltp / STRIKE_GAP) * STRIKE_GAP
@@ -280,7 +272,7 @@ if __name__ == "__main__":
     
     if download_success:
         run_pre_market_logic()
-        send_telegram("🟢 Dhan Smart Bot: Ultra-Robust System Online!")
+        send_telegram("🟢 Dhan Smart Bot: System Ready with Smart Auto-Strike!")
     else:
         send_telegram("🔴 Dhan Smart Bot: Master Scrip Download Failed!")
         
