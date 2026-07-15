@@ -102,7 +102,7 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         opt_type_col = COL_OPTION_TYPE if COL_OPTION_TYPE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[4]
         close_col = COL_CLOSE if COL_CLOSE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[5]
 
-        # OPTSTK வடிகட்டல்
+        # 1. முதலில் OPTSTK/OPTIDX மற்றும் குறிப்பிட்ட பங்கை மட்டும் தனியாகப் பிரிக்கிறோம்
         df_filter = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[inst_col].isin(['OPTSTK', 'OPTIDX'])) & 
             (DHAN_MASTER_DF[underlying_col].str.contains(stock_name, case=False, na=False)) &
@@ -112,10 +112,22 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         if df_filter.empty:
             return None, 0.0, target_strike
 
-        # ⭐️ முக்கியத் திருத்தம்: BSE போன்ற டெக்ஸ்டுகளை எண்களாக மாற்றி, வெற்று மதிப்புகளை நீக்குகிறது
-        df_filter[strike_col] = pd.to_numeric(df_filter[strike_col], errors='coerce')
+        # ⭐️ புதிய அதிரடி திருத்தம்: ஸ்ட்ரைக் காலத்தில் இருக்கும் தரவுகளை ஸ்ட்ரிங்காக மாற்றி,
+        # அதில் எண்கள் மற்றும் புள்ளி (.) மட்டுமே இருப்பதை உறுதி செய்துவிட்டு, மீதியை நீக்குகிறோம்.
+        df_filter[strike_col] = df_filter[strike_col].astype(str).str.strip()
+        
+        # எண்கள் இல்லாத (உதாரணத்திற்கு 'BSE') ரோக்களை முற்றிலும் நீக்குகிறோம்
+        # இந்த ரீஜெக்ஸ் (Regex) எண்களைத் தவிர மற்ற டெக்ஸ்டுகள் இருந்தால் அதை தூக்கிவிடும்
+        df_filter = df_filter[df_filter[strike_col].str.match(r'^\d+(\.\d+)?$', na=False)]
+
+        # இப்போது பாதுகாப்பாக எண்களாக மாற்றலாம், 'BSE' இருக்கவே இருக்காது!
+        df_filter[strike_col] = pd.to_numeric(df_filter[strike_col])
         df_filter = df_filter.dropna(subset=[token_col, strike_col])
         
+        if df_filter.empty:
+            return None, 0.0, target_strike
+            
+        # டார்கெட் ஸ்ட்ரைக்கிற்கு அருகில் உள்ளதை எடுத்தல்
         df_filter['strike_diff'] = (df_filter[strike_col] - float(target_strike)).abs()
         df_sorted = df_filter.sort_values(by='strike_diff')
         
@@ -139,7 +151,6 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
     except Exception as e:
         print(f"Error finding ID for {stock_name}: {e}")
     return None, 0.0, target_strike
-
 # ------------------------------------------
 # 5. Live LTP API Call (Dhan Credentials)
 # ------------------------------------------
