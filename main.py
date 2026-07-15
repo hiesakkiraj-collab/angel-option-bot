@@ -22,10 +22,10 @@ STRIKE_GAP = 50
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
-# காலம் பெயர்களைத் தானாகக் கண்டறியும் மேப்பிங் வேரியபிள்கள்
+# காலம் பெயர்களுக்கான வேரியபிள்கள்
 COL_TOKEN = None
 COL_INST_NAME = None
-COL_SYMBOL = None
+COL_UNDERLYING = None
 COL_STRIKE = None
 COL_OPTION_TYPE = None
 COL_CLOSE = None
@@ -47,57 +47,58 @@ def send_telegram(message):
         print(f"Telegram Error: {e}")
 
 # ------------------------------------------
-# 3. Dhan Master Scrip டவுன்லோடு & டைனமிக் காலம் கண்டறிதல்
+# 3. Dhan Master Scrip டவுன்லோடு & காலம் பெயர்களைத் தானாகப் பொருத்துதல்
 # ------------------------------------------
 def download_dhan_scrip_master():
-    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_SYMBOL, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
+    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
     print("Downloading Dhan Scrip Master File... Please wait...")
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
     try:
         response = requests.get(url, timeout=30)
         if response.status_code == 200:
             csv_data = io.StringIO(response.text)
+            # UTF-8-sig மூலமாக பைட் ஆர்டர் மார்க்கை நீக்கி லோடு செய்தல்
             df = pd.read_csv(csv_data, low_memory=False, encoding='utf-8-sig')
             
-            # காலம் பெயர்களில் இருக்கும் தேவையில்லாத ஸ்பேஸ்களை நீக்குதல்
+            # காலம் பெயர்களை சுத்தப்படுத்துதல்
             df.columns = df.columns.str.strip()
             DHAN_MASTER_DF = df
             
-            print("Dhan Scrip Master Loaded! Total Columns:", len(df.columns))
-            print("Available Columns:", list(df.columns)[:20])
+            print("Dhan Scrip Master Downloaded Successfully!")
+            print("Columns in CSV:", list(df.columns)[:15])
             
-            # 🔍 தானாகவே சரியான காலம் பெயர்களைத் தேடிக் கண்டறியும் லாஜிக்
+            # 🔍 CSV அமைப்பிற்கு தகுந்தவாறு காலம் பெயர்களைத் தானாகத் தேர்ந்தெடுத்தல்
             for col in df.columns:
                 col_upper = col.upper()
-                if "SMART" in col_upper or "TOKEN" in col_upper:
+                # 1. Token Column
+                if col_upper == "SECURITY_ID" or "SMART_TOKEN" in col_upper:
                     COL_TOKEN = col
-                elif "INSTRUMENT" in col_upper and "NAME" in col_upper:
+                # 2. Instrument Column
+                elif col_upper == "INSTRUMENT" or "INSTRUMENT_NAME" in col_upper:
                     COL_INST_NAME = col
-                elif "TRADING" in col_upper and "SYMBOL" in col_upper:
-                    COL_SYMBOL = col
-                elif "STRIKE" in col_upper:
+                # 3. Underlying Symbol Column
+                elif col_upper == "UNDERLYING_SYMBOL" or "TRADING_SYMBOL" in col_upper:
+                    COL_UNDERLYING = col
+                # 4. Strike Column
+                elif col_upper == "STRIKE_PRICE" or "STRIKE_PRI" in col_upper:
                     COL_STRIKE = col
-                elif "OPTION" in col_upper and "TYPE" in col_upper:
+                # 5. Option Type Column
+                elif col_upper == "OPTION_TYPE" or "OPTION_TYP" in col_upper:
                     COL_OPTION_TYPE = col
-                elif "CLOSE" in col_upper:
+                # 6. Close Column
+                elif "CLOSE" in col_upper or "CUSTOM_CLOSE" in col_upper:
                     COL_CLOSE = col
             
-            # ஒருவேளை கிடைக்கவில்லை எனில் Fallback டிஃபால்ட் பெயர்கள்
-            COL_TOKEN = COL_TOKEN or "SEM_SMART_TOKEN"
-            COL_INST_NAME = COL_INST_NAME or "SEM_INSTRUMENT_NAME"
-            COL_SYMBOL = COL_SYMBOL or "SEM_TRADING_SYMBOL"
-            COL_STRIKE = COL_STRIKE or "SEM_STRIKE_PRICE"
-            COL_OPTION_TYPE = COL_OPTION_TYPE or "SEM_OPTION_TYPE"
-            COL_CLOSE = COL_CLOSE or "SEM_CUSTOM_CLOSE"
+            # Fallback Defaut values
+            COL_TOKEN = COL_TOKEN or "SECURITY_ID"
+            COL_INST_NAME = COL_INST_NAME or "INSTRUMENT"
+            COL_UNDERLYING = COL_UNDERLYING or "UNDERLYING_SYMBOL"
+            COL_STRIKE = COL_STRIKE or "STRIKE_PRICE"
+            COL_OPTION_TYPE = COL_OPTION_TYPE or "OPTION_TYPE"
+            COL_CLOSE = COL_CLOSE or "SM_UPPER_LIMIT" # Default fallback
             
-            print(f"🎯 Dynamic Mapping Success:")
-            print(f" - Token Col: {COL_TOKEN}")
-            print(f" - Instrument Col: {COL_INST_NAME}")
-            print(f" - Trading Symbol Col: {COL_SYMBOL}")
-            print(f" - Strike Price Col: {COL_STRIKE}")
-            print(f" - Option Type Col: {COL_OPTION_TYPE}")
-            print(f" - Close Price Col: {COL_CLOSE}")
-            
+            print("🎯 Dynamic columns mapped successfully:")
+            print(f"Token: {COL_TOKEN}, InstName: {COL_INST_NAME}, Underlying: {COL_UNDERLYING}, Strike: {COL_STRIKE}, Option: {COL_OPTION_TYPE}")
             return True
         else:
             print("Failed to download Scrip Master from Dhan.")
@@ -110,22 +111,23 @@ def download_dhan_scrip_master():
 # 4. Security ID மற்றும் Close LTP தேடுதல்
 # ------------------------------------------
 def get_dhan_option_details(stock_name, strike_price, option_type):
-    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_SYMBOL, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
+    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
     if DHAN_MASTER_DF is None:
         return None, 0.0, strike_price
     
     try:
-        # கண்டறியப்பட்ட காலம் பெயர்களைக் கொண்டு ஃபில்டர் செய்தல்
+        # 1. 'OPTSTK' மற்றும் ஸ்டாக் பெயர் கொண்டு ஃபில்டர் செய்தல்
         df_filter = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[COL_INST_NAME] == 'OPTSTK') & 
-            (DHAN_MASTER_DF[COL_SYMBOL].str.startswith(stock_name, na=False)) &
+            (DHAN_MASTER_DF[COL_UNDERLYING] == stock_name) &
             (DHAN_MASTER_DF[COL_OPTION_TYPE] == option_type)
         ]
         
-        # ஸ்ட்ரைக் விலையை ஃப்ளோட்டாக மாற்றி ஃபில்டர் செய்தல்
+        # 2. ஸ்ட்ரைக் விலையை சரியாக மேட்ச் செய்தல்
         df_filter[COL_STRIKE] = pd.to_numeric(df_filter[COL_STRIKE], errors='coerce')
         df_strike = df_filter[df_filter[COL_STRIKE] == float(strike_price)]
         
+        # குறிப்பிட்ட ஸ்ட்ரைக் விலை இல்லை என்றால், முதல் கிடைக்கும் ஆக்டிவ் ஸ்ட்ரைக்கை எடுத்தல்
         if not df_strike.empty:
             df_filter = df_strike
             
@@ -262,7 +264,7 @@ if __name__ == "__main__":
     
     if download_success:
         run_pre_market_logic()
-        send_telegram("🟢 Dhan Smart Bot: Self-Healing Active & Monitoring!")
+        send_telegram("🟢 Dhan Smart Bot: System Online & Monitoring Successfully!")
     else:
         send_telegram("🔴 Dhan Smart Bot: Master Scrip Download Failed!")
         
