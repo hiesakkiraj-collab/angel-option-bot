@@ -57,7 +57,6 @@ def download_dhan_scrip_master():
         response = requests.get(url, timeout=30)
         if response.status_code == 200:
             csv_data = io.StringIO(response.text)
-            # UTF-8-sig மூலமாக பைட் ஆர்டர் மார்க்கை நீக்கி லோடு செய்தல்
             df = pd.read_csv(csv_data, low_memory=False, encoding='utf-8-sig')
             
             # காலம் பெயர்களை சுத்தப்படுத்துதல்
@@ -89,13 +88,13 @@ def download_dhan_scrip_master():
                 elif "CLOSE" in col_upper or "CUSTOM_CLOSE" in col_upper:
                     COL_CLOSE = col
             
-            # Fallback Defaut values
+            # Fallback Default values
             COL_TOKEN = COL_TOKEN or "SECURITY_ID"
             COL_INST_NAME = COL_INST_NAME or "INSTRUMENT"
             COL_UNDERLYING = COL_UNDERLYING or "UNDERLYING_SYMBOL"
             COL_STRIKE = COL_STRIKE or "STRIKE_PRICE"
             COL_OPTION_TYPE = COL_OPTION_TYPE or "OPTION_TYPE"
-            COL_CLOSE = COL_CLOSE or "SM_UPPER_LIMIT" # Default fallback
+            COL_CLOSE = COL_CLOSE or "SM_UPPER_LIMIT"
             
             print("🎯 Dynamic columns mapped successfully:")
             print(f"Token: {COL_TOKEN}, InstName: {COL_INST_NAME}, Underlying: {COL_UNDERLYING}, Strike: {COL_STRIKE}, Option: {COL_OPTION_TYPE}")
@@ -108,7 +107,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 4. Security ID மற்றும் Close LTP தேடுதல்
+# 4. Security ID மற்றும் Close LTP தேடுதல் (Failsafe Matching)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, strike_price, option_type):
     global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
@@ -116,18 +115,18 @@ def get_dhan_option_details(stock_name, strike_price, option_type):
         return None, 0.0, strike_price
     
     try:
-        # 1. 'OPTSTK' மற்றும் ஸ்டாக் பெயர் கொண்டு ஃபில்டர் செய்தல்
+        # 1. 'OPTSTK' மற்றும் ஸ்டாக் பெயருடன் தொடங்கும் குறியீடுகளை மட்டும் ஃபில்டர் செய்தல் (.startswith)
         df_filter = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[COL_INST_NAME] == 'OPTSTK') & 
-            (DHAN_MASTER_DF[COL_UNDERLYING] == stock_name) &
+            (DHAN_MASTER_DF[COL_UNDERLYING].str.startswith(stock_name, na=False)) &
             (DHAN_MASTER_DF[COL_OPTION_TYPE] == option_type)
         ]
         
-        # 2. ஸ்ட்ரைக் விலையை சரியாக மேட்ச் செய்தல்
+        # 2. ஸ்ட்ரைக் விலையை ஃப்ளோட்டாக மாற்றி மேட்ச் செய்தல்
         df_filter[COL_STRIKE] = pd.to_numeric(df_filter[COL_STRIKE], errors='coerce')
         df_strike = df_filter[df_filter[COL_STRIKE] == float(strike_price)]
         
-        # குறிப்பிட்ட ஸ்ட்ரைக் விலை இல்லை என்றால், முதல் கிடைக்கும் ஆக்டிவ் ஸ்ட்ரைக்கை எடுத்தல்
+        # ஒருவேளை குறிப்பிட்ட ஸ்ட்ரைக் விலை இல்லை என்றால், முதல் கிடைக்கும் ஆக்டிவ் ஒப்பந்தத்தை எடுத்தல்
         if not df_strike.empty:
             df_filter = df_strike
             
