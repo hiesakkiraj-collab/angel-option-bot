@@ -22,7 +22,7 @@ STRIKE_GAP = 50
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
-# எந்த எக்ஸ்டர்னல் லைப்ரரியும் இல்லாமல் துல்லியமாக இந்திய நேரமண்டலத்தை (+5:30) உருவாக்குதல்
+# இந்திய நேரமண்டலம் (+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # ------------------------------------------
@@ -61,7 +61,7 @@ def download_dhan_scrip_master():
         return False
 
 # ------------------------------------------
-# 4. Security ID மற்றும் Close LTP தேடுதல்
+# 4. Security ID மற்றும் Close LTP தேடுதல் (காலம் திருத்தப்பட்டது)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, strike_price, option_type):
     global DHAN_MASTER_DF
@@ -69,16 +69,17 @@ def get_dhan_option_details(stock_name, strike_price, option_type):
         return None, 0.0
     
     try:
+        # SEM_TOKEN என்பதுதான் Dhan மாஸ்டர் ஃபைலின் சரியான காலத்தின் பெயர்
         df_filter = DHAN_MASTER_DF[
             (DHAN_MASTER_DF['SEM_INSTRUMENT_NAME'] == 'OPTSTK') & 
-            (DHAN_MASTER_DF['SEM_TRADING_SYMBOL'].str.startswith(stock_name)) &
+            (DHAN_MASTER_DF['SEM_TRADING_SYMBOL'].str.startswith(stock_name, na=False)) &
             (DHAN_MASTER_DF['SEM_STRIKE_PRICE'] == float(strike_price)) &
             (DHAN_MASTER_DF['SEM_OPTION_TYPE'] == option_type)
         ]
         
         if not df_filter.empty:
             row = df_filter.iloc[0]
-            security_id = int(row['SEM_SMART_TOKEN'])
+            security_id = int(row['SEM_TOKEN']) # இங்கிருந்த பிழை திருத்தப்பட்டுள்ளது
             close_price = float(row.get('SEM_CUSTOM_CLOSE', 10.0))
             return security_id, close_price
     except Exception as e:
@@ -117,7 +118,15 @@ def run_pre_market_logic():
     
     for stock in STOCKS_LIST:
         try:
-            strike_to_check = 6800 if stock == "SBIN" else 2500 
+            # ஒவ்வொரு ஸ்டாக்கிற்கும் தகுந்த ஸ்ட்ரைக் பேஸ் வேல்யூ செட் செய்தல்
+            if stock == "SBIN":
+                strike_to_check = 850 
+            elif stock == "RELIANCE":
+                strike_to_check = 2500
+            elif stock == "TCS":
+                strike_to_check = 4000
+            else:
+                strike_to_check = 1500
             
             call_id, call_ltp_close = get_dhan_option_details(stock, strike_to_check, "CE")
             put_id, put_ltp_close = get_dhan_option_details(stock, strike_to_check, "PE")
@@ -128,15 +137,21 @@ def run_pre_market_logic():
                     "call_security_id": call_id,
                     "put_security_id": put_id
                 }
-                print(f"Setup Locked for {stock}: Strike {strike_to_check}")
+                print(f"Setup Locked for {stock}: Strike {strike_to_check} (ID Fixed)")
+            else:
+                print(f"Could not find options for {stock} at strike {strike_to_check}")
         except Exception as e:
-            print(f"Error in Pre-market setup: {e}")
+            print(f"Error in Pre-market setup for {stock}: {e}")
 
 # ------------------------------------------
 # 7. லைவ் மார்க்கெட் கண்காணிப்பு
 # ------------------------------------------
 def monitor_live_market():
     print("Live Market Monitoring...")
+    if not PRE_MARKET_SELECTED_STRIKES:
+        print("No stocks configured in Pre-Market Setup!")
+        return
+
     for stock, setup in PRE_MARKET_SELECTED_STRIKES.items():
         try:
             selected_strike = setup["selected_strike"]
@@ -191,8 +206,8 @@ if __name__ == "__main__":
     download_success = download_dhan_scrip_master()
     
     if download_success:
-        send_telegram("🟢 Dhan Smart Bot: System Active & Monitoring Live Market!")
         run_pre_market_logic()
+        send_telegram("🟢 Dhan Smart Bot: Columns Fixed. Monitor Running!")
     else:
         send_telegram("🔴 Dhan Smart Bot: Master Scrip Download Failed!")
         
@@ -200,10 +215,8 @@ if __name__ == "__main__":
     server_thread.start()
     
     while True:
-        # டெல்லியில் இருக்கும் சர்வர் நேரத்தை துல்லியமான இந்திய நேரமாக (IST) மாற்றுதல்
         now_ist = datetime.now(IST).time()
         
-        # காலை 09:15 மற்றும் மதியம் 03:30 மணிக்கான ஸ்ட்ரக்சர்
         market_start = datetime(2000, 1, 1, 9, 15, 0).time()
         market_end = datetime(2000, 1, 1, 15, 30, 0).time()
         
