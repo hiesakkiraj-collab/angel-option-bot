@@ -64,40 +64,51 @@ def download_dhan_scrip_master():
             DHAN_MASTER_DF = df
             
             print("Dhan Scrip Master Downloaded Successfully!")
-            print("Columns in CSV:", list(df.columns)[:15])
+            print("Available Columns in CSV:", list(df.columns)[:15])
             
-            # 🔍 CSV அமைப்பிற்கு தகுந்தவாறு காலம் பெயர்களைத் தானாகத் தேர்ந்தெடுத்தல்
+            # 🔍 மிகத் துல்லியமான டைனமிக் மேப்பிங் (Failsafe Substring Matching)
             for col in df.columns:
                 col_upper = col.upper()
-                # 1. Token Column
-                if col_upper == "SECURITY_ID" or "SMART_TOKEN" in col_upper:
+                
+                # 1. Token Column (SMART, TOKEN, அல்லது SECURITY_ID என்று இருந்தால்)
+                if "SMART" in col_upper or "TOKEN" in col_upper or col_upper == "SECURITY_ID":
                     COL_TOKEN = col
                 # 2. Instrument Column
-                elif col_upper == "INSTRUMENT" or "INSTRUMENT_NAME" in col_upper:
+                elif "INSTRUMENT" in col_upper or col_upper == "INSTRUMENT":
                     COL_INST_NAME = col
                 # 3. Underlying Symbol Column
-                elif col_upper == "UNDERLYING_SYMBOL" or "TRADING_SYMBOL" in col_upper:
+                elif "TRADING_SYMBOL" in col_upper or "UNDERLYING" in col_upper:
                     COL_UNDERLYING = col
                 # 4. Strike Column
-                elif col_upper == "STRIKE_PRICE" or "STRIKE_PRI" in col_upper:
+                elif "STRIKE" in col_upper:
                     COL_STRIKE = col
                 # 5. Option Type Column
-                elif col_upper == "OPTION_TYPE" or "OPTION_TYP" in col_upper:
+                elif "OPTION" in col_upper:
                     COL_OPTION_TYPE = col
                 # 6. Close Column
                 elif "CLOSE" in col_upper or "CUSTOM_CLOSE" in col_upper:
                     COL_CLOSE = col
             
-            # Fallback Default values
-            COL_TOKEN = COL_TOKEN or "SECURITY_ID"
-            COL_INST_NAME = COL_INST_NAME or "INSTRUMENT"
-            COL_UNDERLYING = COL_UNDERLYING or "UNDERLYING_SYMBOL"
-            COL_STRIKE = COL_STRIKE or "STRIKE_PRICE"
-            COL_OPTION_TYPE = COL_OPTION_TYPE or "OPTION_TYPE"
-            COL_CLOSE = COL_CLOSE or "SM_UPPER_LIMIT"
+            # 🚨 பக்கா சேஃப்டி ஃபால்பேக் லாஜிக் (Fallback if mapping fails)
+            if not COL_TOKEN and len(df.columns) > 2:
+                # பொதுவாக Dhan CSV-ல் 2வது அல்லது 3வது காலம் தான் டோக்கனாக இருக்கும் (உதாரணமாக குறியீட்டின் அடிப்படையில் 2வது காலம்)
+                COL_TOKEN = df.columns[2]
+            
+            COL_TOKEN = COL_TOKEN or "SEM_SMART_TOKEN"
+            COL_INST_NAME = COL_INST_NAME or "SEM_INSTRUMENT_NAME"
+            COL_UNDERLYING = COL_UNDERLYING or "SEM_TRADING_SYMBOL"
+            COL_STRIKE = COL_STRIKE or "SEM_STRIKE_PRICE"
+            COL_OPTION_TYPE = COL_OPTION_TYPE or "SEM_OPTION_TYPE"
+            COL_CLOSE = COL_CLOSE or "SEM_CUSTOM_CLOSE"
             
             print("🎯 Dynamic columns mapped successfully:")
-            print(f"Token: {COL_TOKEN}, InstName: {COL_INST_NAME}, Underlying: {COL_UNDERLYING}, Strike: {COL_STRIKE}, Option: {COL_OPTION_TYPE}")
+            print(f" - Token Col: {COL_TOKEN}")
+            print(f" - Instrument Col: {COL_INST_NAME}")
+            print(f" - Underlying Col: {COL_UNDERLYING}")
+            print(f" - Strike Price Col: {COL_STRIKE}")
+            print(f" - Option Type Col: {COL_OPTION_TYPE}")
+            print(f" - Close Price Col: {COL_CLOSE}")
+            
             return True
         else:
             print("Failed to download Scrip Master from Dhan.")
@@ -126,14 +137,20 @@ def get_dhan_option_details(stock_name, strike_price, option_type):
         df_filter[COL_STRIKE] = pd.to_numeric(df_filter[COL_STRIKE], errors='coerce')
         df_strike = df_filter[df_filter[COL_STRIKE] == float(strike_price)]
         
-        # ஒருவேளை குறிப்பிட்ட ஸ்ட்ரைக் விலை இல்லை என்றால், முதல் கிடைக்கும் ஆக்டிவ் ஒப்பந்தத்தை எடுத்தல்
+        # ஒருவேளை குறிப்பிட்ட ஸ்ட்ரைக் விலை இல்லை என்றால், முதல் கிடைக்கும் ஒப்பந்தத்தை எடுத்தல்
         if not df_strike.empty:
             df_filter = df_strike
             
         if not df_filter.empty:
             row = df_filter.iloc[0]
             
-            security_id = int(row[COL_TOKEN])
+            # எரர் வராமல் தடுக்க 'row.get' மூலம் பாதுகாப்பாக டோக்கனை எடுக்கிறோம்
+            security_id = row.get(COL_TOKEN)
+            if pd.isna(security_id):
+                # Token காலத்தின் பெயர் மாறினால், ரோவின் முதல் மதிப்பை டோக்கனாக எடுக்கவும்
+                security_id = row.iloc[2] if len(row) > 2 else row.iloc[0]
+                
+            security_id = int(float(security_id))
             close_price = float(row.get(COL_CLOSE, 10.0))
             strike_found = float(row.get(COL_STRIKE, strike_price))
             
@@ -263,7 +280,7 @@ if __name__ == "__main__":
     
     if download_success:
         run_pre_market_logic()
-        send_telegram("🟢 Dhan Smart Bot: System Online & Monitoring Successfully!")
+        send_telegram("🟢 Dhan Smart Bot: Ultra-Robust System Online!")
     else:
         send_telegram("🔴 Dhan Smart Bot: Master Scrip Download Failed!")
         
