@@ -16,7 +16,7 @@ ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# இப்போதைக்கு நாம் கண்காணிக்கப் போகும் ஒரே பங்கு SBIN மட்டுமே!
+# இப்போதைக்கு கண்காணிக்கப்படும் ஒரே பங்கு SBIN மட்டுமே!
 STOCKS_LIST = ["SBIN"]
 
 # SBIN தோராயமான தற்போதைய சந்தை விலை மற்றும் Strike Gap
@@ -26,12 +26,13 @@ STRIKE_GAPS = {"SBIN": 10}
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
-COL_TOKEN = None
-COL_INST_NAME = None
-COL_UNDERLYING = None
-COL_STRIKE = None
-COL_OPTION_TYPE = None
-COL_CLOSE = None
+# Dhan Master CSV-க்கான சரியான காலம்கள் (Standard Mappings)
+COL_TOKEN = "SEM_SMART_TOKEN"         # Dhan-ன் பிரத்யேக செக்யூரிட்டி ஐடி காலம்
+COL_INST_NAME = "SEM_INSTRUMENT_NAME"  # OPTSTK அல்லது OPTIDX
+COL_UNDERLYING = "SEM_TRADING_SYMBOL"  # Trading Symbol (e.g., SBIN-Jul2026-1030-CE)
+COL_STRIKE = "SEM_STRIKE_PRICE"        # Strike Price
+COL_OPTION_TYPE = "SEM_OPTION_TYPE"    # CE அல்லது PE
+COL_CLOSE = "SEM_CUSTOM_CLOSE"         # முந்தைய நாளின் முடிவு விலை
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -65,19 +66,20 @@ def download_dhan_scrip_master():
             
             print("Dhan Scrip Master Downloaded Successfully!")
             
+            # டைனமிக் முறையில் காலம் பெயர்களைக் கண்டறிதல் (இணைப்புத் தோல்வியைத் தடுக்க)
             for col in df.columns:
                 col_upper = col.upper()
-                if "SMART" in col_upper or "TOKEN" in col_upper or col_upper == "SECURITY_ID":
+                if "SMART_TOKEN" in col_upper or "SEM_SMART_TOKEN" in col_upper or col_upper == "SECURITY_ID":
                     COL_TOKEN = col
-                elif "INSTRUMENT" in col_upper or col_upper == "INSTRUMENT":
+                elif "INSTRUMENT_NAME" in col_upper or "SEM_INSTRUMENT_NAME" in col_upper:
                     COL_INST_NAME = col
-                elif "TRADING_SYMBOL" in col_upper or "UNDERLYING" in col_upper:
+                elif "TRADING_SYMBOL" in col_upper or "SEM_TRADING_SYMBOL" in col_upper:
                     COL_UNDERLYING = col
-                elif "STRIKE" in col_upper:
+                elif "STRIKE_PRICE" in col_upper or "SEM_STRIKE_PRICE" in col_upper:
                     COL_STRIKE = col
-                elif "OPTION" in col_upper:
+                elif "OPTION_TYPE" in col_upper or "SEM_OPTION_TYPE" in col_upper:
                     COL_OPTION_TYPE = col
-                elif "CLOSE" in col_upper or "CUSTOM_CLOSE" in col_upper:
+                elif "CUSTOM_CLOSE" in col_upper or "SEM_CUSTOM_CLOSE" in col_upper or "CLOSE" in col_upper:
                     COL_CLOSE = col
             
             return True
@@ -89,7 +91,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 4. Security ID தேடுதல் (SBIN-க்கு மட்டும் பில்டர் செய்கிறது)
+# 4. Security ID தேடுதல் (துல்லியமான தேடுதல் முறை)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, target_strike, option_type):
     global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
@@ -97,38 +99,46 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         return None, 0.0, target_strike
     
     try:
-        # SBIN விருப்ப ஒப்பந்தங்களை (Options) மட்டும் பில்டர் செய்தல்
+        # காலம் பெயர்கள் காலியாக இல்லை என்பதை உறுதிப்படுத்துகிறோம்
+        token_col = COL_TOKEN if COL_TOKEN in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[0]
+        inst_col = COL_INST_NAME if COL_INST_NAME in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[1]
+        underlying_col = COL_UNDERLYING if COL_UNDERLYING in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[2]
+        strike_col = COL_STRIKE if COL_STRIKE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[3]
+        opt_type_col = COL_OPTION_TYPE if COL_OPTION_TYPE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[4]
+        close_col = COL_CLOSE if COL_CLOSE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[5]
+
+        # 1. OPTSTK மற்றும் குறிப்பிட்ட பங்கின் பெயருக்கு ஏற்றவாறு வடிகட்டுகிறோம்
         df_filter = DHAN_MASTER_DF[
-            (DHAN_MASTER_DF[COL_INST_NAME] == 'OPTSTK') & 
-            (DHAN_MASTER_DF[COL_UNDERLYING].str.startswith(stock_name, na=False)) &
-            (DHAN_MASTER_DF[COL_OPTION_TYPE] == option_type)
+            (DHAN_MASTER_DF[inst_col].isin(['OPTSTK', 'OPTIDX'])) & 
+            (DHAN_MASTER_DF[underlying_col].str.contains(stock_name, case=False, na=False)) &
+            (DHAN_MASTER_DF[opt_type_col].str.upper() == option_type.upper())
         ].copy()
         
         if df_filter.empty:
             return None, 0.0, target_strike
 
-        # நன் மற்றும் காலியான வேல்யூக்களைத் தவிர்த்தல்
-        df_filter = df_filter.dropna(subset=[COL_TOKEN, COL_STRIKE])
-        df_filter[COL_STRIKE] = pd.to_numeric(df_filter[COL_STRIKE], errors='coerce')
-        df_filter = df_filter.dropna(subset=[COL_STRIKE])
+        # 2. NaN மதிப்புகளை நீக்கிவிட்டு ஸ்ட்ரைக்கை எண்களாக மாற்றுகிறோம்
+        df_filter = df_filter.dropna(subset=[token_col, strike_col])
+        df_filter[strike_col] = pd.to_numeric(df_filter[strike_col], errors='coerce')
+        df_filter = df_filter.dropna(subset=[strike_col])
         
-        # டார்கெட் விலைக்கு (1030) மிக நெருக்கமான ஸ்ட்ரைக்
-        df_filter['strike_diff'] = (df_filter[COL_STRIKE] - float(target_strike)).abs()
+        # 3. நம்முடைய டார்கெட் விலைக்கு (1030) மிக அருகில் உள்ள ஸ்ட்ரைக்கை கண்டறிகிறோம்
+        df_filter['strike_diff'] = (df_filter[strike_col] - float(target_strike)).abs()
         df_sorted = df_filter.sort_values(by='strike_diff')
         
         if not df_sorted.empty:
             row = df_sorted.iloc[0]
             
-            security_id_raw = row.get(COL_TOKEN)
+            security_id_raw = row.get(token_col)
             if pd.isna(security_id_raw) or security_id_raw is None:
                 return None, 0.0, target_strike
                 
             security_id = int(float(security_id_raw))
             
-            close_raw = row.get(COL_CLOSE, 0.0)
+            close_raw = row.get(close_col, 0.0)
             close_price = float(close_raw) if not pd.isna(close_raw) and close_raw is not None else 0.0
             
-            strike_found = float(row.get(COL_STRIKE, target_strike))
+            strike_found = float(row.get(strike_col, target_strike))
             
             return security_id, close_price, strike_found
             
@@ -187,7 +197,7 @@ def run_pre_market_logic():
             }
             print(f"✅ Setup Locked for SBIN: Strike {call_strike_actual}")
         else:
-            print("❌ Could not find SBIN option contracts in Dhan Master.")
+            print(f"❌ Could not find SBIN option contracts in Dhan Master. Call ID: {call_id}, Put ID: {put_id}")
     except Exception as e:
         print(f"Error in Pre-market setup for SBIN: {e}")
 
