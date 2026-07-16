@@ -97,7 +97,7 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         return None, 0.0, target_strike
     
     try:
-        # காலம் பெயர்கள் சரியாக உள்ளதா எனப் பார்த்தல்
+        # காலம் பெயர்கள் சரியாக உள்ளதா என உறுதி செய்தல்
         t_col = COL_TOKEN if COL_TOKEN in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[0]
         i_col = COL_INST_NAME if COL_INST_NAME in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[1]
         u_col = COL_UNDERLYING if COL_UNDERLYING in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[2]
@@ -105,7 +105,7 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         o_col = COL_OPTION_TYPE if COL_OPTION_TYPE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[4]
         c_col = COL_CLOSE if COL_CLOSE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[5]
 
-        # 1. OPTSTK/OPTIDX மற்றும் குறிப்பிட்ட பங்கை மட்டும் ஃபில்டர் செய்கிறோம்
+        # 1. ஆரம்ப கட்ட பில்டரிங் (OPTSTK / குறிப்பிட்ட பங்கு / CE அல்லது PE)
         df_filter = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[i_col].isin(['OPTSTK', 'OPTIDX'])) & 
             (DHAN_MASTER_DF[u_col].str.contains(stock_name, case=False, na=False)) &
@@ -115,16 +115,18 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         if df_filter.empty:
             return None, 0.0, target_strike
 
-        # ⭐️ 2. மாபெரும் திருத்தம்: errors='coerce' மூலம் 'BSE' போன்ற அத்தனை குப்பைகளையும் NaN ஆக மாற்றுகிறோம்
+        # ⭐️ 2. மாபெரும் திருத்தம்: Strike மற்றும் Token இரண்டையுமே எண்களாக மாற்றுகிறோம்
+        # டோக்கன் காலமில் 'BSE' இருந்தால் அது இப்போ NaN ஆகிவிடும்!
         df_filter[s_col] = pd.to_numeric(df_filter[s_col], errors='coerce')
+        df_filter[t_col] = pd.to_numeric(df_filter[t_col], errors='coerce')
         
-        # 3. NaN மதிப்புகள் கொண்ட ரோக்களை ஒட்டுமொத்தமாக நீக்குகிறோம்
+        # 3. இரண்டிலும் NaN இருக்கும் அத்தனை தேவையற்ற ரோக்களையும் ஒட்டுமொத்தமாக நீக்குகிறோம்
         df_filter = df_filter.dropna(subset=[t_col, s_col])
         
         if df_filter.empty:
             return None, 0.0, target_strike
             
-        # 4. இப்போது 100% எண்கள் மட்டுமே இருக்கும், எர்ரர் இன்றி கழிக்கலாம்
+        # 4. இப்போது 100% தூய்மையான எண்கள் மட்டுமே இருக்கும்
         target_strike_float = float(target_strike)
         df_filter['strike_diff'] = (df_filter[s_col] - target_strike_float).abs()
         df_sorted = df_filter.sort_values(by='strike_diff')
@@ -132,17 +134,14 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         if not df_sorted.empty:
             row = df_sorted.iloc[0]
             
-            security_id_raw = row.get(t_col)
-            if pd.isna(security_id_raw) or security_id_raw is None:
-                return None, 0.0, target_strike
-                
-            security_id = int(float(security_id_raw))
+            # ஏற்கனவே numeric ஆக மாற்றியதால் இப்போ தாராளமாக int ஆக மாறும், எர்ரர் வராது!
+            security_id = int(row[t_col])
             
             close_raw = row.get(c_col, 0.0)
             close_price = pd.to_numeric(close_raw, errors='coerce')
             close_price = float(close_price) if not pd.isna(close_price) else 0.0
             
-            strike_found = float(row.get(s_col, target_strike))
+            strike_found = float(row[s_col])
             
             return security_id, close_price, strike_found
             
