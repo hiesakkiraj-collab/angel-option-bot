@@ -93,9 +93,9 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. 🔥 Dhan Market Feed LTP Batch API Call (v2 Official Format)
+# 3. 🔥 Dhan Market Feed LTP Batch API Call (v2 100% Match)
 # ------------------------------------------
-def get_dhan_batch_ltp(instruments_list, segment="SEC_DERIVATIVE"):
+def get_dhan_batch_ltp(instruments_list, segment="NSE_FO"):
     if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
         return {}
         
@@ -106,11 +106,10 @@ def get_dhan_batch_ltp(instruments_list, segment="SEC_DERIVATIVE"):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    # 🔥 [FIX] Dhan API v2 ஆவணங்களின்படி பாய்லோடு அமைப்பை மாற்றியுள்ளோம்
-    # Format: { "SEC_DERIVATIVE": ["token1", "token2", ...] }
-    tokens_only = [str(item[0]) for item in instruments_list]
+    # 🔥 [FIX] Dhan API v2 ஆவணங்களின்படி 100% சரியான போய்லோடு வடிவம்:
+    # { "NSE_FO": [{"securityId": "138995"}, {"securityId": "138996"}] }
     payload = {
-        segment: tokens_only
+        segment: [{"securityId": str(item[0])} for item in instruments_list]
     }
     
     result_map = {}
@@ -118,16 +117,21 @@ def get_dhan_batch_ltp(instruments_list, segment="SEC_DERIVATIVE"):
         response = requests.post(url, headers=headers, json=payload, timeout=7)
         if response.status_code == 200:
             data = response.json()
-            # Dhan ரெஸ்பான்ஸில் இருந்து டேட்டாவைத் துல்லியமாக எடுத்தல்
             resp_data = data.get("data", data.get("Data", {}))
             
-            # சில சமயம் செக்மென்ட் கீ-ன் உள்ளே டேட்டா வரும், அல்லது நேரடியாக வரும்
+            # தனுஷ் API ரெஸ்பான்ஸில் இருந்து டேட்டாவை பாதுகாப்பாக எடுக்கிறோம்
             segment_data = resp_data.get(segment, resp_data)
             
-            for token_str in tokens_only:
-                token_id = int(token_str)
-                # Dhan API தங்களுக்குள் token_id அல்லது tradingSymbol கீயைப் பயன்படுத்தும்
+            for item in instruments_list:
+                token_id = int(item[0])
+                token_str = str(token_id)
+                
+                # லூப்பில் செக்யூரிட்டி ஐடி கீயை தேடுகிறோம்
                 token_info = segment_data.get(token_str, {})
+                if not token_info:
+                    # சில சமயம் ரெஸ்பான்ஸ் நேரடியாக லிஸ்ட்டாகவோ அல்லது வேறு வடிவிலோ இருந்தால்
+                    token_info = resp_data.get(token_str, {})
+                    
                 ltp = float(token_info.get("ltp", token_info.get("lastPrice", 0.0)))
                 result_map[token_id] = ltp
         else:
@@ -148,8 +152,9 @@ def process_stock_strategy(stock):
         gap_limit = gap / 2
         approx_base = STOCK_APPROX_PRICES.get(stock, 1000.0)
         
+        # Dhan எக்ஸ்சேஞ்ச் செக்மென்ட் மேப்பிங்
         inst_type = "OPTIDX" if stock in ["NIFTY", "BANKNIFTY"] else "OPTSTK"
-        api_segment = "IDX_DERIVATIVE" if stock in ["NIFTY", "BANKNIFTY"] else "SEC_DERIVATIVE"
+        api_segment = "NSE_FNO" if stock in ["NIFTY", "BANKNIFTY"] else "NSE_FO"
         
         df_stock = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[COL_INST_NAME] == inst_type) &
@@ -211,7 +216,7 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No CE/PE tokens built for current expiry.")
             return
 
-        print(f"📡 Requesting [{api_segment}] Batch Format for {stock}: Total Tokens: {len(batch_instruments)}")
+        print(f"📡 Requesting [{api_segment}] Strict Structure for {stock}: Total Tokens: {len(batch_instruments)}")
 
         ltp_data_map = get_dhan_batch_ltp(batch_instruments, segment=api_segment)
         
@@ -255,7 +260,7 @@ def process_stock_strategy(stock):
                         call_put_diff = diff
 
         if selected_strike is None:
-            print(f"⚠️ {stock}: Official API response mapping returned 0.0. Please check if Dhan Auth Token is valid.")
+            print(f"⚠️ {stock}: API response objects mapped to 0.0. Awaiting valid live stream.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -315,7 +320,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V15.0 - Strict Payload Formatted)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V15.1 - Final Structure Fixed)!")
         
     while True:
         now_ist = datetime.now(IST).time()
