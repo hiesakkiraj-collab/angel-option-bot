@@ -4,29 +4,28 @@ import requests
 import pandas as pd
 import io
 
-# ரகசிய விபரங்கள்
 CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
 ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
-def get_dhan_instruments():
-    """
-    தனுஷ் இன்ஸ்ட்ருமென்ட் மாஸ்டரை டவுன்லோடு செய்து, 
-    எக்ஸ்சேஞ்ச் ஐடிக்குரிய Dhan Security ID-ஐ மேப் செய்யும்.
-    """
+def get_dhan_ltp_fixed():
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-    try:
-        response = requests.get(url, timeout=30)
-        df = pd.read_csv(io.StringIO(response.text))
-        # SBIN க்கான ஐடியை மட்டும் தேடுவோம்
-        sbin_data = df[df['SEM_TRADING_SYMBOL'].str.contains("SBIN", na=False)]
-        print(f"SBIN மேப்பிங் விபரங்கள்:\n{sbin_data[['SEM_TRADING_SYMBOL', 'SEM_SMST_SECURITY_ID']]}")
-    except Exception as e:
-        print(f"Error: {e}")
+    response = requests.get(url, timeout=30)
+    df = pd.read_csv(io.StringIO(response.text), low_memory=False)
+    
+    # SBIN-Jul2026-FUT க்கான ஐடியில் எது சிறியதோ அதை எடுப்போம் (Internal ID)
+    sbin_fut = df[(df['SEM_TRADING_SYMBOL'] == "SBIN-Jul2026-FUT")]
+    # சிறிய ID-ஐத் தேடுகிறோம்
+    target_id = str(sbin_fut['SEM_SMST_SECURITY_ID'].min())
+    print(f"DEBUG: Selected Internal ID for SBIN-FUT: {target_id}")
+    
+    # தனுஷ் v2 LTP API Call
+    api_url = "https://api.dhan.co/v2/marketfeed/ltp"
+    headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
+    payload = {"NSE_FNO": [{"securityId": target_id}]}
+    
+    resp = requests.post(api_url, headers=headers, json=payload)
+    print(f"RESPONSE: {resp.text}")
 
 if __name__ == "__main__":
-    print("V19.0 Worker Mode Started...")
-    get_dhan_instruments()
+    get_dhan_ltp_fixed()
     
-    # லூப்பில் ஓடாமல் இருக்க சிறிய இடைவெளி
-    time.sleep(10)
-    print("Worker task completed.")
