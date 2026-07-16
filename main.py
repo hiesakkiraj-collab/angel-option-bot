@@ -23,14 +23,13 @@ STRIKE_GAPS = {"SBIN": 10}
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
-# காலம்களின் குறியீட்டு பெயர்கள் (Standardized Upper case)
-COL_TOKEN = "SEM_SMART_TOKEN"         
-COL_INST_NAME = "SEM_INSTRUMENT_NAME"  
-COL_UNDERLYING = "SEM_UNDERLYING_SYMBOL" 
-COL_TRADING_SYM = "SEM_TRADING_SYMBOL"
-COL_STRIKE = "SEM_STRIKE_PRICE"        
-COL_OPTION_TYPE = "SEM_OPTION_TYPE"    
-COL_CLOSE = "SEM_CUSTOM_CLOSE"         
+# காலம் எண்கள் (Index Positions - Position Based)
+IDX_TOKEN = 0       # SEM_SMART_TOKEN
+IDX_INST_NAME = 1   # SEM_INSTRUMENT_NAME
+IDX_TRADING_SYM = 2 # SEM_TRADING_SYMBOL
+IDX_STRIKE = 3      # SEM_STRIKE_PRICE
+IDX_OPTION_TYPE = 4 # SEM_OPTION_TYPE
+IDX_CLOSE = 5       # SEM_CUSTOM_CLOSE
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -48,10 +47,10 @@ def send_telegram(message):
         print(f"Telegram Error: {e}")
 
 # ------------------------------------------
-# 3. Dhan Master Scrip டவுன்லோடு
+# 3. Dhan Master Scrip டவுன்লোடு
 # ------------------------------------------
 def download_dhan_scrip_master():
-    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_TRADING_SYM, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
+    global DHAN_MASTER_DF, IDX_TOKEN, IDX_INST_NAME, IDX_TRADING_SYM, IDX_STRIKE, IDX_OPTION_TYPE, IDX_CLOSE
     print("Downloading Dhan Scrip Master File... Please wait...")
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
     try:
@@ -60,34 +59,28 @@ def download_dhan_scrip_master():
             csv_data = io.StringIO(response.text)
             df = pd.read_csv(csv_data, low_memory=False, encoding='utf-8-sig')
             
-            # அனைத்து காலம் பெயர்களையும் தூய்மைப்படுத்தி UPPERCASE ஆக மாற்றுகிறோம்
-            df.columns = df.columns.str.strip().str.upper()
-            
+            # காலம் பெயர்களில் இருக்கும் ஸ்பேஸ்களை மட்டும் நீக்குகிறோம்
+            df.columns = df.columns.str.strip()
             DHAN_MASTER_DF = df
             print("Dhan Scrip Master Downloaded Successfully!")
             
-            # டைனமிக் முறையில் சரியான காலம்களைத் தேர்ந்தெடுத்தல்
-            for col in df.columns:
-                if "SMART_TOKEN" in col or col == "SECURITY_ID":
-                    COL_TOKEN = col
-                elif "INSTRUMENT_NAME" in col:
-                    COL_INST_NAME = col
-                elif "UNDERLYING_SYMBOL" in col:
-                    COL_UNDERLYING = col
-                elif "TRADING_SYMBOL" in col or col == "SYMBOL":
-                    COL_TRADING_SYM = col
-                elif "STRIKE_PRICE" in col:
-                    COL_STRIKE = col
-                elif "OPTION_TYPE" in col:
-                    COL_OPTION_TYPE = col
-                elif "CUSTOM_CLOSE" in col or "CLOSE" in col:
-                    COL_CLOSE = col
+            # பொசிஷன்களை டைனமிக் ஆகவும் சரிபார்க்கிறோம் (பாதுகாப்பிற்கு)
+            for idx, col in enumerate(df.columns):
+                col_upper = col.upper()
+                if "SMART_TOKEN" in col_upper or "SECURITY_ID" in col_upper:
+                    IDX_TOKEN = idx
+                elif "INSTRUMENT_NAME" in col_upper:
+                    IDX_INST_NAME = idx
+                elif "TRADING_SYMBOL" in col_upper or "SYMBOL" in col_upper:
+                    IDX_TRADING_SYM = idx
+                elif "STRIKE_PRICE" in col_upper:
+                    IDX_STRIKE = idx
+                elif "OPTION_TYPE" in col_upper:
+                    IDX_OPTION_TYPE = idx
+                elif "CUSTOM_CLOSE" in col_upper or "CLOSE" in col_upper:
+                    IDX_CLOSE = idx
             
-            # UNDERLYING_SYMBOL இல்லையெனில் TRADING_SYMBOL
-            if COL_UNDERLYING not in df.columns:
-                COL_UNDERLYING = COL_TRADING_SYM
-
-            print(f"Columns Mapped Successfully -> Token: {COL_TOKEN}, Strike: {COL_STRIKE}")
+            print(f"Columns Mapped by Index -> Token Pos: {IDX_TOKEN}, Strike Pos: {IDX_STRIKE}, Symbol Pos: {IDX_TRADING_SYM}")
             return True
         else:
             print("Failed to download Scrip Master from Dhan.")
@@ -97,57 +90,62 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 4. Security ID தேடுதல் (Index Based Bulletproof Mode)
+# 4. Security ID தேடுதல் (Position Based Ultimate Mode)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, target_strike, option_type):
-    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_TRADING_SYM, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
+    global DHAN_MASTER_DF, IDX_TOKEN, IDX_INST_NAME, IDX_TRADING_SYM, IDX_STRIKE, IDX_OPTION_TYPE, IDX_CLOSE
     if DHAN_MASTER_DF is None:
         return None, 0.0, target_strike
     
     try:
-        # 1. ஆரம்ப கட்ட பில்டரிங்
+        # காலம் பெயர்களை எடுக்கிறோம்
+        cols = DHAN_MASTER_DF.columns
+        t_col = cols[IDX_TOKEN]
+        i_col = cols[IDX_INST_NAME]
+        sym_col = cols[IDX_TRADING_SYM]
+        s_col = cols[IDX_STRIKE]
+        o_col = cols[IDX_OPTION_TYPE]
+        
+        # 1. ஆரம்ப கட்ட பில்டரிங் (இன்டெக்ஸ் காலம்களைப் பயன்படுத்தி)
         df_filter = DHAN_MASTER_DF[
-            (DHAN_MASTER_DF[COL_INST_NAME].isin(['OPTSTK', 'OPTIDX'])) & 
-            ((DHAN_MASTER_DF[COL_UNDERLYING].str.upper() == stock_name.upper()) | 
-             (DHAN_MASTER_DF[COL_TRADING_SYM].str.startswith(stock_name.upper(), na=False))) &
-            (DHAN_MASTER_DF[COL_OPTION_TYPE].str.upper() == option_type.upper())
+            (DHAN_MASTER_DF[i_col].isin(['OPTSTK', 'OPTIDX'])) & 
+            (DHAN_MASTER_DF[sym_col].str.startswith(stock_name.upper(), na=False)) &
+            (DHAN_MASTER_DF[o_col].str.upper() == option_type.upper())
         ].copy()
         
         if df_filter.empty:
+            print(f"⚠️ Initial filter empty for {stock_name} {option_type}")
             return None, 0.0, target_strike
 
         # 2. ஸ்ட்ரைக் மற்றும் டோக்கனை எண்களாக மாற்றுகிறோம்
-        df_filter[COL_STRIKE] = pd.to_numeric(df_filter[COL_STRIKE], errors='coerce')
-        df_filter[COL_TOKEN] = pd.to_numeric(df_filter[COL_TOKEN], errors='coerce')
+        df_filter[s_col] = pd.to_numeric(df_filter[s_col], errors='coerce')
+        df_filter[t_col] = pd.to_numeric(df_filter[t_col], errors='coerce')
         
         # NaN ரோக்களை நீக்குகிறோம்
-        df_filter = df_filter.dropna(subset=[COL_TOKEN, COL_STRIKE])
+        df_filter = df_filter.dropna(subset=[t_col, s_col])
         
         if df_filter.empty:
+            print(f"⚠️ Empty after numeric conversion for {stock_name} {option_type}")
             return None, 0.0, target_strike
             
         # 3. டார்கெட் ஸ்ட்ரைக்கிற்கு அருகில் உள்ளதை எடுத்தல்
         target_strike_float = float(target_strike)
-        df_filter['STRIKE_DIFF'] = (df_filter[COL_STRIKE] - target_strike_float).abs()
+        df_filter['STRIKE_DIFF'] = (df_filter[s_col] - target_strike_float).abs()
         df_sorted = df_filter.sort_values(by='STRIKE_DIFF')
         
         if not df_sorted.empty:
-            # ⭐️ எர்ரரைத் தவிர்க்க மாபெரும் மாற்றம்:
-            # நேரடியாக பெயரைக் கூப்பிடாமல், தொடர் இன்டெக்ஸ் மூலம் மதிப்புகளைப் பெறுகிறோம் (KeyError வராது!)
-            token_idx = df_sorted.columns.get_loc(COL_TOKEN)
-            strike_idx = df_sorted.columns.get_loc(COL_STRIKE)
-            
-            security_id = int(df_sorted.iloc[0, token_idx])
-            strike_found = float(df_sorted.iloc[0, strike_idx])
+            # ⭐️ .iloc[0] மூலம் காலம் பெயரே இல்லாமல் இன்டெக்ஸ் பொசிஷன் படி டேட்டாவை எடுக்கிறோம்
+            security_id = int(df_sorted.iloc[0, IDX_TOKEN])
+            strike_found = float(df_sorted.iloc[0, IDX_STRIKE])
+            trading_symbol_found = str(df_sorted.iloc[0, IDX_TRADING_SYM])
             
             close_price = 0.0
-            if COL_CLOSE in df_sorted.columns:
-                close_idx = df_sorted.columns.get_loc(COL_CLOSE)
-                close_raw = df_sorted.iloc[0, close_idx]
+            if IDX_CLOSE < len(df_sorted.columns):
+                close_raw = df_sorted.iloc[0, IDX_CLOSE]
                 close_num = pd.to_numeric(close_raw, errors='coerce')
                 close_price = float(close_num) if not pd.isna(close_num) else 0.0
             
-            print(f"🎯 Found Contract -> ID: {security_id} | Strike: {strike_found}")
+            print(f"🎯 Found Contract -> Symbol: {trading_symbol_found} | ID: {security_id} | Strike: {strike_found}")
             return security_id, close_price, strike_found
             
     except Exception as e:
@@ -220,7 +218,6 @@ def monitor_live_market():
         call_ltp_live = get_dhan_live_ltp(setup["call_security_id"])
         put_ltp_live = get_dhan_live_ltp(setup["put_security_id"])
         
-        # ஆஃப்-மார்க்கெட் டெஸ்டிங் ஃபால்பேக் மதிப்புகள்
         if call_ltp_live == 0.0:
             call_ltp_live = 15.0
         if put_ltp_live == 0.0:
