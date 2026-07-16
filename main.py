@@ -16,6 +16,7 @@ ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+# நீங்கள் கண்காணிக்கும் பங்குகள்
 STOCKS_LIST = ["SBIN", "RELIANCE"]
 
 STRIKE_GAPS = {
@@ -25,10 +26,10 @@ STRIKE_GAPS = {
     "BANKNIFTY": 100
 }
 
-# தற்போதைய லைவ் மார்க்கெட் பேஸ் ரேஞ்ச் பில்டரிங் செய்ய
+# லேட்டஸ்ட் மார்க்கெட் பேஸ் ரேஞ்ச் பில்டரிங் செய்ய
 STOCK_APPROX_PRICES = {
-    "SBIN": 770.0,
-    "RELIANCE": 1740.0,
+    "SBIN": 820.0,       # தற்போதைய SBIN தோராய விலை (லாக்ஸ் அடிப்படையில் 820 ஆக மாற்றப்பட்டுள்ளது)
+    "RELIANCE": 1650.0,  # தற்போதைய RELIANCE தோராய விலை (லாக்ஸ் அடிப்படையில் 1650 ஆக மாற்றப்பட்டுள்ளது)
     "NIFTY": 24200.0,
     "BANKNIFTY": 52500.0
 }
@@ -94,11 +95,15 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. Live LTP API Call (🔥 Standardized Structure with Debugging)
+# 3. 🔥 Batch Live LTP API Call (ஒரே காலில் அனைத்து டோக்கன்களையும் எடுத்தல்)
 # ------------------------------------------
-def get_dhan_live_ltp(security_id, symbol="", segment="NSE_FO"):
-    if not ACCESS_TOKEN or not CLIENT_ID or not security_id:
-        return 0.0
+def get_dhan_batch_ltp(instruments_list, segment="NSE_FO"):
+    """
+    instruments_list: list of tuples -> [(security_id, symbol), ...]
+    Returns a dictionary: { security_id: ltp, ... }
+    """
+    if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
+        return {}
         
     headers = {
         'access-token': ACCESS_TOKEN, 
@@ -107,32 +112,29 @@ def get_dhan_live_ltp(security_id, symbol="", segment="NSE_FO"):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    # Dhan API ஸ்ட்ரிக்ட் ஸ்ட்ரிங் ஃபார்மட்
+    # ஒரே பேட்ச் பாய்லோடில் அனைத்து டோக்கன்களையும் இணைக்கிறோம்
     payload = {
         "instruments": [
-            {
-                "exchangeSegment": str(segment), 
-                "securityId": str(security_id)
-            }
+            {"exchangeSegment": str(segment), "securityId": str(item[0])}
+            for item in instruments_list
         ]
     }
     
+    result_map = {}
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=5)
+        response = requests.post(url, headers=headers, json=payload, timeout=7)
         if response.status_code == 200:
             data = response.json()
-            # Dhan API response parsing (இருவிதமான கீகளையும் செக் செய்கிறது)
             resp_data = data.get("data", data.get("Data", {}))
-            ltp = float(resp_data.get(str(security_id), {}).get("ltp", 0.0))
-            if ltp > 0:
-                return ltp
-            else:
-                print(f"⚠️ API Response for {symbol} ({security_id}): {data}")
+            for item in instruments_list:
+                sec_id = str(item[0])
+                ltp = float(resp_data.get(sec_id, {}).get("ltp", 0.0))
+                result_map[int(sec_id)] = ltp
         else:
-            print(f"❌ HTTP Error {response.status_code} for {symbol}: {response.text}")
+            print(f"❌ Batch HTTP Error {response.status_code}: {response.text}")
     except Exception as e:
-        print(f"❌ Exception in LTP Call for {symbol}: {e}")
-    return 0.0
+        print(f"❌ Exception in Batch LTP Call: {e}")
+    return result_map
 
 # ------------------------------------------
 # 4. நியூ ஃபார்முலா கணக்கீடு லாஜிக்
@@ -165,7 +167,7 @@ def process_stock_strategy(stock):
         if COL_EXPIRY in df_stock.columns:
             df_stock = df_stock.sort_values(by=COL_EXPIRY)
             
-        # Dhan CSV-ல் ஸ்ட்ரைக் ப்ரைஸ் 100 மடங்கு அதிகமாக இருந்தால் சரி செய்யும் லாஜிக்
+        # Dhan CSV-ல் ஸ்ட்ரைக் ப்ரைஸ் 100 மடங்கு அதிகமாக இருந்தால் சரி செய்தல்
         first_strike = df_stock[COL_STRIKE].iloc[0]
         if first_strike > 10000 and stock in ["SBIN", "RELIANCE"]:
             df_stock[COL_STRIKE] = df_stock[COL_STRIKE] / 100.0
@@ -174,15 +176,12 @@ def process_stock_strategy(stock):
         closest_strikes = sorted(unique_strikes, key=lambda x: abs(x - approx_base))[:12]
         closest_strikes = sorted(closest_strikes)
         
-        selected_strike = None
-        selected_call_ltp = 0.0
-        selected_put_ltp = 0.0
-        call_put_diff = 0.0
+        # 🤝 STEP 1: ரேட் லிமிட்டை தவிர்க்க, முதலில் தேவையான அனைத்து டோக்கன்களையும் பேட்ச் லிஸ்ட்டில் தயார் செய்கிறோம்
+        batch_instruments = []
+        strike_pairs = {} # strike: (c_id, p_id)
         
-        # 🤝 STEP 1 & 2: கண்டிஷனை செக் செய்து முதல் சரியான ஸ்ட்ரைக்கை எடுத்தல்
         for strike in closest_strikes:
-            df_strike = df_stock[(df_stock[COL_STRIKE] == strike)]
-            
+            df_strike = df_stock[df_stock[COL_STRIKE] == strike]
             call_row = df_strike[df_strike[COL_TRADING_SYM].str.endswith("CE", na=False)]
             put_row = df_strike[df_strike[COL_TRADING_SYM].str.endswith("PE", na=False)]
             
@@ -193,15 +192,29 @@ def process_stock_strategy(stock):
             c_sym = call_row.iloc[0][COL_TRADING_SYM]
             p_sym = put_row.iloc[0][COL_TRADING_SYM]
             
-            # 'NSE_FO' செக்மெண்ட்டில் API கால் செய்கிறோம்
-            c_ltp = get_dhan_live_ltp(c_id, symbol=c_sym, segment="NSE_FO")
-            p_ltp = get_dhan_live_ltp(p_id, symbol=p_sym, segment="NSE_FO")
+            batch_instruments.append((c_id, c_sym))
+            batch_instruments.append((p_id, p_sym))
+            strike_pairs[strike] = (c_id, p_id)
             
-            if c_ltp == 0.0 or p_ltp == 0.0:
-                continue
+        # 🤝 STEP 2: ஒரே ஒரு சிங்கிள் ஏபிஐ கால் மூலம் அனைத்து லைவ் விலைகளையும் எடுக்கிறோம் (Rate Limit பாய் பாஸ்!)
+        ltp_data_map = get_dhan_batch_ltp(batch_instruments, segment="NSE_FO")
+        
+        selected_strike = None
+        selected_call_ltp = 0.0
+        selected_put_ltp = 0.0
+        call_put_diff = 0.0
+        
+        # கண்டிஷனை செக் செய்து முதல் சரியான ஸ்ட்ரைக்கை லாக் செய்தல்
+        for strike in closest_strikes:
+            if strike not in strike_pairs: continue
+            c_id, p_id = strike_pairs[strike]
+            
+            c_ltp = ltp_data_map.get(c_id, 0.0)
+            p_ltp = ltp_data_map.get(p_id, 0.0)
+            
+            if c_ltp == 0.0 or p_ltp == 0.0: continue
             
             diff = abs(c_ltp - p_ltp)
-            
             if diff <= gap_limit:
                 selected_strike = strike
                 selected_call_ltp = c_ltp
@@ -209,31 +222,26 @@ def process_stock_strategy(stock):
                 call_put_diff = diff
                 break
                 
-        # பாதுகாப்பு லூப் (0.0 வராமல் இருக்க குறைந்தபட்ச லைவ் வேல்யூவை எடுத்தல்)
+        # பேக்கப் லூப் (ஒருவேளை கச்சிதமான கேப் லிமிட் கிடைக்கவில்லை என்றால் குறைந்தபட்ச டிஃபரன்ஸ் உள்ளதை எடுத்தல்)
         if selected_strike is None:
+            min_diff = 999999
             for strike in closest_strikes:
-                df_strike = df_stock[df_stock[COL_STRIKE] == strike]
-                call_row = df_strike[df_strike[COL_TRADING_SYM].str.endswith("CE", na=False)]
-                put_row = df_strike[df_strike[COL_TRADING_SYM].str.endswith("PE", na=False)]
-                if call_row.empty or put_row.empty: continue
-                
-                c_id = int(call_row.iloc[0][COL_TOKEN])
-                p_id = int(put_row.iloc[0][COL_TOKEN])
-                c_sym = call_row.iloc[0][COL_TRADING_SYM]
-                p_sym = put_row.iloc[0][COL_TRADING_SYM]
-                
-                c_ltp = get_dhan_live_ltp(c_id, symbol=c_sym, segment="NSE_FO")
-                p_ltp = get_dhan_live_ltp(p_id, symbol=p_sym, segment="NSE_FO")
+                if strike not in strike_pairs: continue
+                c_id, p_id = strike_pairs[strike]
+                c_ltp = ltp_data_map.get(c_id, 0.0)
+                p_ltp = ltp_data_map.get(p_id, 0.0)
                 
                 if c_ltp > 0.0 and p_ltp > 0.0:
-                    selected_strike = strike
-                    selected_call_ltp = c_ltp
-                    selected_put_ltp = p_ltp
-                    call_put_diff = abs(c_ltp - p_ltp)
-                    break
+                    diff = abs(c_ltp - p_ltp)
+                    if diff < min_diff:
+                        min_diff = diff
+                        selected_strike = strike
+                        selected_call_ltp = c_ltp
+                        selected_put_ltp = p_ltp
+                        call_put_diff = diff
 
         if selected_strike is None:
-            print(f"❌ {stock}: Live FO data could not be fetched. Check Token Validity or API endpoint permissions.")
+            print(f"⚠️ {stock}: All batch tokens returned 0.0. Market might be closed or Token is expired.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -279,7 +287,7 @@ def process_stock_strategy(stock):
 def monitor_live_market():
     for stock in STOCKS_LIST:
         process_stock_strategy(stock)
-        time.sleep(2)
+        time.sleep(1)
 
 def start_dummy_server():
     port = int(os.environ.get("PORT", 10000))
@@ -292,7 +300,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V14.4 - API Debug Mode)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V14.5 - Batch Mode)!")
         
     while True:
         now_ist = datetime.now(IST).time()
