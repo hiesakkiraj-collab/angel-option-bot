@@ -1,39 +1,32 @@
 import os
+import time
 import requests
-from flask import Flask
-import threading
+import pandas as pd
+import io
 
-app = Flask(__name__)
+# ரகசிய விபரங்கள்
+CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
+ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-# தனுஷின் சரியான API URL
-DHAN_BASE_URL = "https://api.dhan.co"
-
-def get_dhan_token_details():
-    # இது அனைத்து தனுஷ் இன்ஸ்ட்ருமென்ட்களையும் தரவிறக்கம் செய்யும்
-    url = f"{DHAN_BASE_URL}/instruments"
+def get_dhan_instruments():
+    """
+    தனுஷ் இன்ஸ்ட்ருமென்ட் மாஸ்டரை டவுன்லோடு செய்து, 
+    எக்ஸ்சேஞ்ச் ஐடிக்குரிய Dhan Security ID-ஐ மேப் செய்யும்.
+    """
+    url = "https://images.dhan.co/api-data/api-scrip-master.csv"
     try:
-        response = requests.get(url)
-        # இதில் 814 ஐத் தேடி, அதற்கு இணையான 'dhanSecurityId'-ஐ எடுக்கலாம்
-        return response.json()
+        response = requests.get(url, timeout=30)
+        df = pd.read_csv(io.StringIO(response.text))
+        # SBIN க்கான ஐடியை மட்டும் தேடுவோம்
+        sbin_data = df[df['SEM_TRADING_SYMBOL'].str.contains("SBIN", na=False)]
+        print(f"SBIN மேப்பிங் விபரங்கள்:\n{sbin_data[['SEM_TRADING_SYMBOL', 'SEM_SMST_SECURITY_ID']]}")
     except Exception as e:
-        return str(e)
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
-    # போர்ட் சிக்கலைத் தீர்க்க Flask சர்வர்
-    port = int(os.environ.get("PORT", 10000))
+    print("V19.0 Worker Mode Started...")
+    get_dhan_instruments()
     
-    # தனுஷ் ஐடி டிடெக்டர்
-    print("V18.0 Initialized...")
-    
-    # 814 எக்ஸ்சேஞ்ச் ஐடிக்குரிய தனுஷ் ஐடியைக் கண்டறிய முயற்சி
-    # (இது ஒருமுறை மட்டும் ரன் ஆகும்)
-    threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': port}).start()
-    
-    # ஒரு சிறிய டெஸ்ட்
-    print("Fetching full instrument list to resolve IDs...")
-    instruments = get_dhan_token_details()
-    print("Token resolution complete.")
+    # லூப்பில் ஓடாமல் இருக்க சிறிய இடைவெளி
+    time.sleep(10)
+    print("Worker task completed.")
