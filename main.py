@@ -2,42 +2,46 @@ import os
 import time
 import requests
 import pandas as pd
-import io
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone, timedelta
 
-# 1. ரகசிய விபரங்கள்
+# உங்கள் Render-ல் இருக்கும் ENV விபரங்கள்
 CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
 ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
-# 2. 🔥 V16.0 Token Resolver (DhanSecurityId Fix)
-def get_dhan_batch_ltp_fixed(instruments_list):
+def get_live_price(security_id):
+    """
+    தனுஷ் v2 LTP API-க்கான மிக எளிய மற்றும் வலுவான அணுகுமுறை
+    """
+    url = f"https://api.dhan.co/v2/marketfeed/ltp"
     headers = {
-        'access-token': ACCESS_TOKEN, 
-        'client-id': CLIENT_ID, 
+        'access-token': ACCESS_TOKEN,
+        'client-id': CLIENT_ID,
         'Content-Type': 'application/json'
     }
-    url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    # தனுஷ் v2-ன் ரகசிய கீ: 'dhanSecurityId'
-    # சில பழைய மாஸ்டர் ஐடிகள் வேலை செய்யாது, ஆனால் இதுதான் சரியான வழி
-    token_objects = [{"dhanSecurityId": str(item[0])} for item in instruments_list]
-    
+    # தனுஷ் v2-ல் NSE_FNO கீயுடன் சரியான ஆப்ஜெக்ட் ஸ்ட்ரக்சர்
     payload = {
-        "NSE_FNO": token_objects
+        "NSE_FNO": [{"securityId": str(security_id)}]
     }
     
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=7)
-        print(f"📡 [DEBUG V16.0]: Status {response.status_code} | Body: {response.text[:200]}")
-        return response.json()
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            # லாக்ஸில் வரும் டேட்டாவை வைத்து நாம் அடுத்த கட்டத்திற்குச் செல்லலாம்
+            print(f"DEBUG DATA: {data}")
+            return data
+        else:
+            print(f"Error {response.status_code}: {response.text}")
     except Exception as e:
-        print(f"Error: {e}")
-    return {}
+        print(f"Critical Exception: {e}")
+    return None
 
-# 3. Main Logic
 if __name__ == "__main__":
-    # டெஸ்ட் செய்ய ஒரு சிக்னல் (உதாரணத்திற்கு SBIN)
-    # உங்களது பழைய கோடில் இருந்த அதே `batch_instruments` லிஸ்ட்டை இங்கே பயன்படுத்துங்கள்
-    print("Running V16.0 Token Resolver...")
-    # தற்காலிக டெஸ்ட்:
-    # get_dhan_batch_ltp_fixed([(138995, "SBIN_TEST")])
+    print("V17.0 Initialized...")
+    # டெஸ்டிங்கிற்காக SBIN செக்யூரிட்டி ஐடி 814 ஐ மட்டும் முயற்சிப்போம்
+    get_live_price("814")
+    
+    # ஆப் எக்ஸிட் ஆகாமல் இருக்க...
+    while True:
+        time.sleep(60)
