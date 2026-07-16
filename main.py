@@ -3,23 +3,16 @@ import requests
 import pandas as pd
 import io
 
-CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
-ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
-
-def get_dhan_ltp_fixed():
-    # SBIN EQ (Equity) ஐடி 3045
-    target_id = "3045"
+def inspect_columns():
+    url = "https://images.dhan.co/api-data/api-scrip-master.csv"
+    response = requests.get(url, timeout=30)
+    df = pd.read_csv(io.StringIO(response.text), low_memory=False)
     
-    api_url = "https://api.dhan.co/v2/marketfeed/ltp"
-    headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
-    
-    # 🎯 Payload-ஐ வெறும் 'instruments' என்ற கீயில் மாற்றுவோம்
-    payload = {
-        "instruments": [{"securityId": target_id, "exchangeSegment": "NSE_EQ"}]
-    }
-    
-    resp = requests.post(api_url, headers=headers, json=payload)
-    print(f"RESPONSE FOR SBIN EQ: {resp.text}")
+    # SBIN EQ (3045) உள்ள வரிசையை மட்டும் பிரித்து, அதன் அனைத்து காலம்களையும் பிரிண்ட் செய்வோம்
+    sbin_eq = df[df['SEM_SMST_SECURITY_ID'] == 3045]
+    print("--- FULL DATA FOR SBIN EQ ---")
+    for col in sbin_eq.columns:
+        print(f"{col}: {sbin_eq.iloc[0][col]}")
 
 if __name__ == "__main__":
-    get_dhan_ltp_fixed()
+    inspect_columns()
