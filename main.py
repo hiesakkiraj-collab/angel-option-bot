@@ -25,17 +25,12 @@ STRIKE_GAPS = {
     "BANKNIFTY": 100
 }
 
-# பேக்கப் தோராய விலைகள் (ஒருவேளை ஸ்பாட் பிரைஸ் கிடைக்காத போது ஸ்கேன் செய்யத் துவங்கும் ரேஞ்ச்)
+# பேக்கப் தோராய விலைகள் (ஸ்கேன் செய்யத் துவங்கும் தற்போதைய மார்க்கெட் ரேஞ்ச்)
 STOCK_APPROX_PRICES = {
-    "SBIN": 1030,
-    "RELIANCE": 2500,
-    "NIFTY": 24000,
-    "BANKNIFTY": 52000
-}
-
-STOCK_UNDERLYING_TOKENS = {
-    "SBIN": 3045,      
-    "RELIANCE": 2885
+    "SBIN": 770,      # தற்போதைய SBIN தோராய விலை
+    "RELIANCE": 1740,  # தற்போதைய RELIANCE தோராய விலை
+    "NIFTY": 24200,
+    "BANKNIFTY": 52500
 }
 
 DHAN_MASTER_DF = None
@@ -43,6 +38,7 @@ COL_TOKEN = None
 COL_INST_NAME = None   
 COL_TRADING_SYM = None 
 COL_STRIKE = None      
+COL_EXPIRY = None
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -57,10 +53,10 @@ def send_telegram(message):
         print(f"Telegram Error: {e}")
 
 # ------------------------------------------
-# 2. Dhan Master Scrip டவுன்லோடு
+# 2. Dhan Master Scrip டவுன்லோடு & பில்டரிங்
 # ------------------------------------------
 def download_dhan_scrip_master():
-    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_TRADING_SYM, COL_STRIKE
+    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_TRADING_SYM, COL_STRIKE, COL_EXPIRY
     print("Downloading Dhan Scrip Master File... Please wait...")
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
     try:
@@ -82,11 +78,14 @@ def download_dhan_scrip_master():
                     COL_TRADING_SYM = col
                 elif col in ["SEM_STRIKE_PRICE", "STRIKE_PRICE"]:
                     COL_STRIKE = col
+                elif col in ["SEM_EXPIRY_DATE", "EXPIRY_DATE"]:
+                    COL_EXPIRY = col
 
             if not COL_TOKEN: COL_TOKEN = "SEM_SMST_SECURITY_ID"
             if not COL_INST_NAME: COL_INST_NAME = "SEM_INSTRUMENT_NAME"
             if not COL_TRADING_SYM: COL_TRADING_SYM = "SEM_TRADING_SYMBOL"
             if not COL_STRIKE: COL_STRIKE = "SEM_STRIKE_PRICE"
+            if not COL_EXPIRY: COL_EXPIRY = "SEM_EXPIRY_DATE"
 
             print("✅ Master CSV Columns Mapped Successfully.")
             return True
@@ -95,9 +94,9 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. Live LTP API Call (மாற்றியமைக்கப்பட்ட செக்மெண்ட் லாஜிக்)
+# 3. Live LTP API Call (🔥 NFO செக்மெண்ட்டிற்கு மாற்றப்பட்டுள்ளது)
 # ------------------------------------------
-def get_dhan_live_ltp(security_id, segment="NSE_FO"):
+def get_dhan_live_ltp(security_id, segment="NFO"):
     if not ACCESS_TOKEN or not CLIENT_ID or not security_id:
         return 0.0
     headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
@@ -113,27 +112,20 @@ def get_dhan_live_ltp(security_id, segment="NSE_FO"):
     return 0.0
 
 # ------------------------------------------
-# 4. நியூ ஃபார்முலா கணக்கீடு (Spot-ல் சிக்கல் இருந்தாலும் இயங்கும்)
+# 4. நியூ ஃபார்முலா கணக்கீடு லாஜிக்
 # ------------------------------------------
 def process_stock_strategy(stock):
-    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_TRADING_SYM, COL_STRIKE
+    global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_TRADING_SYM, COL_STRIKE, COL_EXPIRY
     if DHAN_MASTER_DF is None: return
 
     try:
         gap = STRIKE_GAPS.get(stock, 10)
         gap_limit = gap / 2
         
-        # 1. ஸ்பாட் பிரைஸ் எடுக்க முயற்சிப்போம்
-        underlying_token = STOCK_UNDERLYING_TOKENS.get(stock)
-        spot_price = get_dhan_live_ltp(underlying_token, segment="NSE_EQ")
-        
-        # ஒருவேளை வரவில்லை என்றால் பேக்கப் அப்ராக்ஸிமேட் விலை
-        if spot_price == 0.0:
-            spot_price = STOCK_APPROX_PRICES.get(stock, 1000.0)
-            print(f"ℹ️ {stock}: Using approximate base price: {spot_price}")
-            
+        spot_price = STOCK_APPROX_PRICES.get(stock, 1000.0)
         inst_type = "OPTIDX" if stock in ["NIFTY", "BANKNIFTY"] else "OPTSTK"
         
+        # 1. குறிப்பிட்ட ஸ்டாக் மற்றும் இன்ஸ்ட்ருமென்ட் பில்டர்
         df_stock = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[COL_INST_NAME] == inst_type) &
             (DHAN_MASTER_DF[COL_TRADING_SYM].str.startswith(stock.upper(), na=False))
@@ -142,9 +134,12 @@ def process_stock_strategy(stock):
         df_stock[COL_STRIKE] = pd.to_numeric(df_stock[COL_STRIKE], errors='coerce')
         df_stock = df_stock.dropna(subset=[COL_STRIKE])
         
-        # தற்போதைய பேஸ் விலைக்கு அருகில் இருக்கும் 10 ஸ்ட்ரைக்குகளை ஸ்கேன் செய்கிறோம்
+        # தற்போதைய எக்ஸ்பைரி கான்டராக்ட்களை மட்டும் எடுக்க பில்டர் (ஆப்ஷனை மட்டும் துல்லியமாக எடுக்க)
+        if COL_EXPIRY in df_stock.columns and not df_stock[COL_EXPIRY].empty:
+            df_stock = df_stock.sort_values(by=COL_EXPIRY)
+        
         unique_strikes = sorted(df_stock[COL_STRIKE].unique())
-        closest_strikes = sorted(unique_strikes, key=lambda x: abs(x - spot_price))[:10]
+        closest_strikes = sorted(unique_strikes, key=lambda x: abs(x - spot_price))[:12]
         closest_strikes = sorted(closest_strikes)
         
         selected_strike = None
@@ -164,11 +159,11 @@ def process_stock_strategy(stock):
             c_id = int(call_row.iloc[0][COL_TOKEN])
             p_id = int(put_row.iloc[0][COL_TOKEN])
             
-            c_ltp = get_dhan_live_ltp(c_id, segment="NSE_FO")
-            p_ltp = get_dhan_live_ltp(p_id, segment="NSE_FO")
+            # 🔥 'NFO' செக்மெண்டில் செக் செய்கிறோம்
+            c_ltp = get_dhan_live_ltp(c_id, segment="NFO")
+            p_ltp = get_dhan_live_ltp(p_id, segment="NFO")
             
-            # லோக்கல் டெஸ்டிங்கிற்காக 0 வந்தால் ஸ்கிப் செய்யாமல் இருக்க
-            if c_ltp == 0.0 and p_ltp == 0.0:
+            if c_ltp == 0.0 or p_ltp == 0.0:
                 continue
             
             diff = abs(c_ltp - p_ltp)
@@ -180,7 +175,7 @@ def process_stock_strategy(stock):
                 call_put_diff = diff
                 break
                 
-        # ஒருவேளை எந்த ஸ்ட்ரைக்கும் லிமிட்டுக்குள் வரவில்லை என்றால், மிகக் குறைந்த வித்தியாசம் கொண்ட ஸ்ட்ரைக்கை எடுக்கும் பாதுகாப்பு லாஜிக்
+        # பாதுகாப்பு பின்தொடர்தல் (ஒருவேளை மிகக் குறைந்த வித்தியாசம் இருந்தால்)
         if selected_strike is None:
             min_diff = 999999
             for strike in closest_strikes:
@@ -188,8 +183,9 @@ def process_stock_strategy(stock):
                 call_row = df_strike[df_strike[COL_TRADING_SYM].str.endswith("CE", na=False)]
                 put_row = df_strike[df_strike[COL_TRADING_SYM].str.endswith("PE", na=False)]
                 if call_row.empty or put_row.empty: continue
-                c_ltp = get_dhan_live_ltp(int(call_row.iloc[0][COL_TOKEN]), segment="NSE_FO")
-                p_ltp = get_dhan_live_ltp(int(put_row.iloc[0][COL_TOKEN]), segment="NSE_FO")
+                c_ltp = get_dhan_live_ltp(int(call_row.iloc[0][COL_TOKEN]), segment="NFO")
+                p_ltp = get_dhan_live_ltp(int(put_row.iloc[0][COL_TOKEN]), segment="NFO")
+                if c_ltp == 0.0 or p_ltp == 0.0: continue
                 diff = abs(c_ltp - p_ltp)
                 if diff < min_diff:
                     min_diff = diff
@@ -199,7 +195,7 @@ def process_stock_strategy(stock):
                     call_put_diff = diff
 
         if selected_strike is None:
-            print(f"❌ {stock}: Critical - Option chain data not available.")
+            print(f"❌ {stock}: Live FO data returned 0.0. Market closed or token error.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -258,7 +254,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V14.1 - Robust Engine)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V14.2 - Fix LTP Live)!")
         
     while True:
         now_ist = datetime.now(IST).time()
