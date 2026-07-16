@@ -23,7 +23,7 @@ STRIKE_GAPS = {"SBIN": 10}
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
-# காலம் மேப்பிங்ஸ் (கண்டிப்பான இயல்புநிலை மதிப்புகள்)
+# காலம் மேப்பிங்ஸ் (முன்னிருப்பு பெயர்கள்)
 COL_TOKEN = "SEM_SMART_TOKEN"         
 COL_INST_NAME = "SEM_INSTRUMENT_NAME"  
 COL_UNDERLYING = "SEM_TRADING_SYMBOL"  
@@ -63,7 +63,7 @@ def download_dhan_scrip_master():
             
             print("Dhan Scrip Master Downloaded Successfully!")
             
-            # துல்லியமான காலம் கண்டறிதல் மாடல்
+            # டைனமிக் முறையில் காலம் பெயர்களைக் கண்டறிதல்
             for col in df.columns:
                 col_upper = col.upper()
                 if "SMART_TOKEN" in col_upper or "SEM_SMART_TOKEN" in col_upper or col_upper == "SECURITY_ID":
@@ -89,7 +89,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 4. Security ID தேடுதல் (Super Safe Mode)
+# 4. Security ID தேடுதல் (Bulletproof Safe Mode)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, target_strike, option_type):
     global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
@@ -97,7 +97,7 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         return None, 0.0, target_strike
     
     try:
-        # காலம் பெயர்கள் இருப்பதை உறுதி செய்தல்
+        # காலம் பெயர்கள் சரியாக உள்ளதா எனப் பார்த்தல்
         t_col = COL_TOKEN if COL_TOKEN in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[0]
         i_col = COL_INST_NAME if COL_INST_NAME in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[1]
         u_col = COL_UNDERLYING if COL_UNDERLYING in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[2]
@@ -105,7 +105,7 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         o_col = COL_OPTION_TYPE if COL_OPTION_TYPE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[4]
         c_col = COL_CLOSE if COL_CLOSE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[5]
 
-        # 1. OPTSTK மற்றும் 'SBIN' குறியீட்டை மட்டும் ஃபில்டர் செய்கிறோம்
+        # 1. OPTSTK/OPTIDX மற்றும் குறிப்பிட்ட பங்கை மட்டும் ஃபில்டர் செய்கிறோம்
         df_filter = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[i_col].isin(['OPTSTK', 'OPTIDX'])) & 
             (DHAN_MASTER_DF[u_col].str.contains(stock_name, case=False, na=False)) &
@@ -115,20 +115,18 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         if df_filter.empty:
             return None, 0.0, target_strike
 
-        # ⭐️ 2. இங்கேயே 'BSE' போன்ற டெக்ஸ்டுகளைத் தூக்குகிறோம்
-        # ஸ்ட்ரைக் காலமை ஸ்ட்ரிங்காக மாற்றி, எண்களைத் தவிர மற்ற டெக்ஸ்ட் இருந்தால் அந்த ரோவை நீக்குகிறது
-        df_filter[s_col] = df_filter[s_col].astype(str).str.strip()
-        df_filter = df_filter[df_filter[s_col].str.match(r'^\d+(\.\d+)?$', na=False)]
-        
-        # 3. இப்போது பாதுகாப்பாக numeric-ஆக கன்வெர்ட் செய்கிறோம்
+        # ⭐️ 2. மாபெரும் திருத்தம்: errors='coerce' மூலம் 'BSE' போன்ற அத்தனை குப்பைகளையும் NaN ஆக மாற்றுகிறோம்
         df_filter[s_col] = pd.to_numeric(df_filter[s_col], errors='coerce')
+        
+        # 3. NaN மதிப்புகள் கொண்ட ரோக்களை ஒட்டுமொத்தமாக நீக்குகிறோம்
         df_filter = df_filter.dropna(subset=[t_col, s_col])
         
         if df_filter.empty:
             return None, 0.0, target_strike
             
-        # 4. டார்கெட் ஸ்ட்ரைக்கிற்கு அருகில் உள்ளதை எடுத்தல்
-        df_filter['strike_diff'] = (df_filter[s_col] - float(target_strike)).abs()
+        # 4. இப்போது 100% எண்கள் மட்டுமே இருக்கும், எர்ரர் இன்றி கழிக்கலாம்
+        target_strike_float = float(target_strike)
+        df_filter['strike_diff'] = (df_filter[s_col] - target_strike_float).abs()
         df_sorted = df_filter.sort_values(by='strike_diff')
         
         if not df_sorted.empty:
@@ -217,7 +215,7 @@ def monitor_live_market():
         call_ltp_live = get_dhan_live_ltp(setup["call_security_id"])
         put_ltp_live = get_dhan_live_ltp(setup["put_security_id"])
         
-        # Fallback Simulation values for testing off-market
+        # ஆஃப்-மார்க்கெட் நேரத்தில் டெஸ்ட் செய்வதற்கான ஃபால்பேக் வேல்யூஸ்
         if call_ltp_live == 0.0:
             call_ltp_live = 15.0
         if put_ltp_live == 0.0:
@@ -283,7 +281,7 @@ def monitor_live_market():
         print(f"Error in Live monitor for SBIN: {e}")
 
 # ------------------------------------------
-# 8. Web Server (Keep-Alive)
+# 8. Web Server (Render Keep-Alive)
 # ------------------------------------------
 def start_dummy_server():
     port = int(os.environ.get("PORT", 10000))
@@ -301,6 +299,7 @@ def start_dummy_server():
 # 9. Main Execution
 # ------------------------------------------
 if __name__ == "__main__":
+    # Render போர்ட் ஸ்கேன் பாஸ் ஆவதற்காக சர்வரை முதலில் துவக்குகிறோம்
     server_thread = threading.Thread(target=start_dummy_server, daemon=True)
     server_thread.start()
     
