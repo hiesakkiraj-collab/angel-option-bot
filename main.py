@@ -95,7 +95,7 @@ def download_dhan_scrip_master():
 # ------------------------------------------
 # 3. Batch Live LTP API Call 
 # ------------------------------------------
-def get_dhan_batch_ltp(instruments_list, segment="NSE_FO"):
+def get_dhan_batch_ltp(instruments_list, segment="IDX_DERIVATIVE"):
     if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
         return {}
         
@@ -106,6 +106,9 @@ def get_dhan_batch_ltp(instruments_list, segment="NSE_FO"):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
+    # 🔥 [FIX] Dhan API-ன் அதிகாரப்பூர்வ ஆவணங்களின்படி 'exchangeSegment' அமைய வேண்டும்.
+    # பங்குகளின் எஃப்&ஓ-விற்கு (Stock Options) 'NSE_FO' என்பது சில சமயம் 'IDX_DERIVATIVE' 
+    # அல்லது 'SEC_DERIVATIVE' ஆக இருக்கும். பாதுகாப்பிற்காக அதிகாரப்பூர்வ String வடிவமாக மாற்றி அனுப்புகிறோம்.
     payload = {
         "instruments": [
             {"exchangeSegment": str(segment), "securityId": str(item[0])}
@@ -141,7 +144,9 @@ def process_stock_strategy(stock):
         gap_limit = gap / 2
         approx_base = STOCK_APPROX_PRICES.get(stock, 1000.0)
         
+        # செக்மென்ட் மேப்பிங்
         inst_type = "OPTIDX" if stock in ["NIFTY", "BANKNIFTY"] else "OPTSTK"
+        api_segment = "IDX_DERIVATIVE" if stock in ["NIFTY", "BANKNIFTY"] else "SEC_DERIVATIVE"
         
         df_stock = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[COL_INST_NAME] == inst_type) &
@@ -171,9 +176,6 @@ def process_stock_strategy(stock):
         df_stock[COL_STRIKE] = pd.to_numeric(df_stock[COL_STRIKE], errors='coerce')
         df_stock = df_stock.dropna(subset=[COL_STRIKE])
         
-        # 🔥 [FIX] Dynamic Strike Price Checking
-        # ஒருவேளை CSV-ல் ஸ்ட்ரைக் ப்ரைஸ் 100 மடங்கு அதிகமாக இருந்தால் (உதாரணம்: SBIN 82000 என்று இருந்தால்) மட்டும் வகுக்க வேண்டும்.
-        # நேரடியாக 820 என்று இருந்தால் வகுக்கக் கூடாது.
         max_strike_in_df = df_stock[COL_STRIKE].max()
         if max_strike_in_df > (approx_base * 5):
             df_stock[COL_STRIKE] = df_stock[COL_STRIKE] / 100.0
@@ -206,10 +208,10 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No CE/PE tokens built for current expiry.")
             return
 
-        # ⚙️ லாக்ஸில் என்ன டோக்கன்கள் அனுப்பப்படுகின்றன என்று பார்க்க பிரிண்ட் செய்கிறோம் (Debug)
-        print(f"📡 Requesting Batch Tokens for {stock}: {batch_instruments[:4]}... Total: {len(batch_instruments)}")
+        print(f"📡 Requesting [{api_segment}] Batch Tokens for {stock}: Total: {len(batch_instruments)}")
 
-        ltp_data_map = get_dhan_batch_ltp(batch_instruments, segment="NSE_FO")
+        # 🔥 api_segment-ஐ பராமீட்டராக அனுப்புகிறோம்
+        ltp_data_map = get_dhan_batch_ltp(batch_instruments, segment=api_segment)
         
         selected_strike = None
         selected_call_ltp = 0.0
@@ -251,8 +253,7 @@ def process_stock_strategy(stock):
                         call_put_diff = diff
 
         if selected_strike is None:
-            # 💡 [INFO LOG] மார்க்கெட் ஆஃப்லைனில் இருந்தால் டோக்கன்கள் 0.0 என்றுதான் வரும், அதை தெளிவாகக் காட்டுகிறோம்.
-            print(f"⚠️ {stock}: Active expiry tokens returned 0.0. (If Market is CLOSED, this is NORMAL. Bot will fetch fine during Live Market hours).")
+            print(f"⚠️ {stock}: Active expiry tokens returned 0.0. Ensure Segment or Auth Token is correct.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -312,7 +313,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V14.8 - Smart Strike & Debug Mode)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V14.9 - Official Segment Fix)!")
         
     while True:
         now_ist = datetime.now(IST).time()
