@@ -25,7 +25,7 @@ STRIKE_GAPS = {
     "BANKNIFTY": 100
 }
 
-# பேக்கப் தோராய விலைகள் (பயனுள்ள ஸ்ட்ரைக்குகளை CSV-ல் இருந்து பில்டர் செய்ய)
+# தற்போதைய லைவ் மார்க்கெட் பேஸ் ரேஞ்ச் பில்டரிங் செய்ய
 STOCK_APPROX_PRICES = {
     "SBIN": 770.0,
     "RELIANCE": 1740.0,
@@ -94,21 +94,44 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. Live LTP API Call (🔥 'NSE_FNO' செக்மெண்ட்டிற்கு மாற்றப்பட்டுள்ளது)
+# 3. Live LTP API Call (🔥 Standardized Structure with Debugging)
 # ------------------------------------------
-def get_dhan_live_ltp(security_id, segment="NSE_FNO"):
+def get_dhan_live_ltp(security_id, symbol="", segment="NSE_FO"):
     if not ACCESS_TOKEN or not CLIENT_ID or not security_id:
         return 0.0
-    headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
+        
+    headers = {
+        'access-token': ACCESS_TOKEN, 
+        'client-id': CLIENT_ID, 
+        'Content-Type': 'application/json'
+    }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
-    payload = {"instruments": [{"exchangeSegment": segment, "securityId": str(security_id)}]}
+    
+    # Dhan API ஸ்ட்ரிக்ட் ஸ்ட்ரிங் ஃபார்மட்
+    payload = {
+        "instruments": [
+            {
+                "exchangeSegment": str(segment), 
+                "securityId": str(security_id)
+            }
+        ]
+    }
+    
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=5)
         if response.status_code == 200:
             data = response.json()
+            # Dhan API response parsing (இருவிதமான கீகளையும் செக் செய்கிறது)
             resp_data = data.get("data", data.get("Data", {}))
-            return float(resp_data.get(str(security_id), {}).get("ltp", 0.0))
-    except Exception: pass
+            ltp = float(resp_data.get(str(security_id), {}).get("ltp", 0.0))
+            if ltp > 0:
+                return ltp
+            else:
+                print(f"⚠️ API Response for {symbol} ({security_id}): {data}")
+        else:
+            print(f"❌ HTTP Error {response.status_code} for {symbol}: {response.text}")
+    except Exception as e:
+        print(f"❌ Exception in LTP Call for {symbol}: {e}")
     return 0.0
 
 # ------------------------------------------
@@ -138,11 +161,11 @@ def process_stock_strategy(stock):
         df_stock[COL_STRIKE] = pd.to_numeric(df_stock[COL_STRIKE], errors='coerce')
         df_stock = df_stock.dropna(subset=[COL_STRIKE])
         
-        # தனியாக இருக்கும் எக்ஸ்பைரிகளை மட்டும் வரிசைப்படுத்தி மிக அருகில் இருக்கும் நடப்பு எக்ஸ்பைரியை எடுக்கிறோம்
+        # எக்ஸ்பைரிகளை வரிசைப்படுத்துதல்
         if COL_EXPIRY in df_stock.columns:
             df_stock = df_stock.sort_values(by=COL_EXPIRY)
             
-        # ⚠️ Dhan CSV-ல் சில சமயம் Strike பிரைஸ் 100 மடங்கு அதிகமாக (பைசா வடிவில்) இருக்கும். அதை சரி செய்கிறோம்:
+        # Dhan CSV-ல் ஸ்ட்ரைக் ப்ரைஸ் 100 மடங்கு அதிகமாக இருந்தால் சரி செய்யும் லாஜிக்
         first_strike = df_stock[COL_STRIKE].iloc[0]
         if first_strike > 10000 and stock in ["SBIN", "RELIANCE"]:
             df_stock[COL_STRIKE] = df_stock[COL_STRIKE] / 100.0
@@ -156,9 +179,8 @@ def process_stock_strategy(stock):
         selected_put_ltp = 0.0
         call_put_diff = 0.0
         
-        # 🤝 STEP 1 & 2: கண்டிஷனை செக் செய்து முதல் ஸ்ட்ரைக்கை லாக் செய்தல்
+        # 🤝 STEP 1 & 2: கண்டிஷனை செக் செய்து முதல் சரியான ஸ்ட்ரைக்கை எடுத்தல்
         for strike in closest_strikes:
-            # ஒருவேளை மாஸ்டர் CSV-ல் மீண்டும் ஒரிஜினல் மதிப்போடு ஒப்பிட வேண்டி வந்தால் பாதுகாப்பு
             df_strike = df_stock[(df_stock[COL_STRIKE] == strike)]
             
             call_row = df_strike[df_strike[COL_TRADING_SYM].str.endswith("CE", na=False)]
@@ -168,10 +190,12 @@ def process_stock_strategy(stock):
             
             c_id = int(call_row.iloc[0][COL_TOKEN])
             p_id = int(put_row.iloc[0][COL_TOKEN])
+            c_sym = call_row.iloc[0][COL_TRADING_SYM]
+            p_sym = put_row.iloc[0][COL_TRADING_SYM]
             
-            # 🔥 'NSE_FNO' செக்மெண்ட்டில் API-ல் இருந்து லைவ் விலை எடுக்கிறோம்
-            c_ltp = get_dhan_live_ltp(c_id, segment="NSE_FNO")
-            p_ltp = get_dhan_live_ltp(p_id, segment="NSE_FNO")
+            # 'NSE_FO' செக்மெண்ட்டில் API கால் செய்கிறோம்
+            c_ltp = get_dhan_live_ltp(c_id, symbol=c_sym, segment="NSE_FO")
+            p_ltp = get_dhan_live_ltp(p_id, symbol=p_sym, segment="NSE_FO")
             
             if c_ltp == 0.0 or p_ltp == 0.0:
                 continue
@@ -185,15 +209,22 @@ def process_stock_strategy(stock):
                 call_put_diff = diff
                 break
                 
-        # பாதுகாப்பு லூப் (0.0 வராமல் இருக்க ஏதேனும் லேட்டஸ்ட் வேல்யூவை எடுத்தல்)
+        # பாதுகாப்பு லூப் (0.0 வராமல் இருக்க குறைந்தபட்ச லைவ் வேல்யூவை எடுத்தல்)
         if selected_strike is None:
             for strike in closest_strikes:
                 df_strike = df_stock[df_stock[COL_STRIKE] == strike]
                 call_row = df_strike[df_strike[COL_TRADING_SYM].str.endswith("CE", na=False)]
                 put_row = df_strike[df_strike[COL_TRADING_SYM].str.endswith("PE", na=False)]
                 if call_row.empty or put_row.empty: continue
-                c_ltp = get_dhan_live_ltp(int(call_row.iloc[0][COL_TOKEN]), segment="NSE_FNO")
-                p_ltp = get_dhan_live_ltp(int(put_row.iloc[0][COL_TOKEN]), segment="NSE_FNO")
+                
+                c_id = int(call_row.iloc[0][COL_TOKEN])
+                p_id = int(put_row.iloc[0][COL_TOKEN])
+                c_sym = call_row.iloc[0][COL_TRADING_SYM]
+                p_sym = put_row.iloc[0][COL_TRADING_SYM]
+                
+                c_ltp = get_dhan_live_ltp(c_id, symbol=c_sym, segment="NSE_FO")
+                p_ltp = get_dhan_live_ltp(p_id, symbol=p_sym, segment="NSE_FO")
+                
                 if c_ltp > 0.0 and p_ltp > 0.0:
                     selected_strike = strike
                     selected_call_ltp = c_ltp
@@ -202,7 +233,7 @@ def process_stock_strategy(stock):
                     break
 
         if selected_strike is None:
-            print(f"❌ {stock}: Live FNO data is still 0.0. Verify if DHAN_ACCESS_TOKEN is valid or Market is Open.")
+            print(f"❌ {stock}: Live FO data could not be fetched. Check Token Validity or API endpoint permissions.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -261,7 +292,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V14.3 - Absolute FNO Fix)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V14.4 - API Debug Mode)!")
         
     while True:
         now_ist = datetime.now(IST).time()
