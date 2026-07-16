@@ -93,7 +93,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.7 Strict Object Router)
+# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.8 Dual Payload Router)
 # ------------------------------------------
 def get_dhan_batch_ltp(instruments_list):
     if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
@@ -106,48 +106,65 @@ def get_dhan_batch_ltp(instruments_list):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    # 🎯 Dhan v2 F&O-விற்கான 100% அதிகாரப்பூர்வ ஆப்ஜெக்ட் லிஸ்ட் ஸ்ட்ரக்சர்
-    # எக்ஸ்சேஞ்ச் டோக்கன்களை ஸ்ட்ரிங் வடிவில் ஆப்ஜெக்ட்டுக்குள் அடைத்து அனுப்புகிறோம்
+    # வடிவம் 1: ஆப்ஜெக்ட் பட்டியல் வடிவம்
     token_objects = [{"securityId": str(item[0])} for item in instruments_list]
+    # வடிவம் 2: தூய ஸ்ட்ரிங் பட்டியல் வடிவம்
+    token_strings = [str(item[0]) for item in instruments_list]
     
-    payload = {
-        "NSE_FNO": token_objects
+    # 🎯 Plan A: அதிகாரப்பூர்வ `NSE_FO` கீயுடன் தூய ஸ்ட்ரிங் பட்டியல் வடிவம்
+    payload_a = {
+        "NSE_FO": token_strings
     }
     
     result_map = {}
     try:
-        # 429 எர்ரரைத் தவிர்க்க கால்களுக்கு இடையே சிறிய கேப்
         time.sleep(0.5) 
-        response = requests.post(url, headers=headers, json=payload, timeout=7)
+        response = requests.post(url, headers=headers, json=payload_a, timeout=7)
         
-        # ஒருவேளை Rate Limit ஹிட் அடித்தால் 2 வினாடிகள் காத்திருந்து மீண்டும் முயலும் (Retry Mechanism)
-        if response.status_code == 429:
-            print("⚠️ Rate Limit (429) hit. Backing off for 2 seconds...")
-            time.sleep(2)
-            response = requests.post(url, headers=headers, json=payload, timeout=7)
+        # ஒருவேளை Plan A தோல்வி அடைந்தால் (400 அல்லது 429), Plan B-க்கு மாறும்
+        if response.status_code != 200 or not response.json().get("data"):
+            print("🔄 Plan A failed. Trying Plan B with Strict Object Layout...")
+            time.sleep(1)
+            payload_b = {
+                "data": {
+                    "NSE_FO": token_objects
+                }
+            }
+            response = requests.post(url, headers=headers, json=payload_b, timeout=7)
 
         if response.status_code == 200:
             data = response.json()
-            print(f"📡 [DEBUG V15.7 RAW RESPONSE]: {str(data)[:350]}")
+            print(f"📡 [DEBUG V15.8 RAW RESPONSE]: {str(data)[:350]}")
             
             resp_data = data.get("data", data.get("Data", {}))
             if resp_data:
-                # NSE_FNO அல்லது எந்த கீயில் வந்தாலும் பிரித்தெடுக்கும் டைனமிக் லூப்
-                for key in resp_data.keys():
-                    segment_data = resp_data.get(key, {})
+                # எந்த செக்மென்ட் பெயர் வழியாக டேட்டா வந்தாலும் பிரித்தெடுக்கும் லூப்
+                for key in ["NSE_FO", "NSE_FNO", "DERIVATIVE", "data", "Data"]:
+                    segment_data = resp_data.get(key, resp_data) if isinstance(resp_data, dict) else resp_data
+                    
                     if isinstance(segment_data, dict):
                         for item in instruments_list:
                             token_id = int(item[0])
                             token_info = segment_data.get(str(token_id), segment_data.get(token_id, {}))
-                            if token_info:
+                            if isinstance(token_info, dict):
                                 ltp = float(token_info.get("ltp", token_info.get("lastPrice", 0.0)))
                                 if ltp > 0:
                                     result_map[token_id] = ltp
+                                    
+                    elif isinstance(segment_data, list):
+                        for node in segment_data:
+                            t_id = node.get("securityId", node.get("SecurityId"))
+                            if t_id:
+                                ltp = float(node.get("ltp", node.get("lastPrice", 0.0)))
+                                result_map[int(t_id)] = ltp
+                                
+                    if result_map:
+                        break
         else:
             print(f"❌ Batch HTTP Error {response.status_code}: {response.text}")
             
     except Exception as e:
-        print(f"❌ Exception in V15.7 Strict Batch LTP Call: {e}")
+        print(f"❌ Exception in V15.8 Batch LTP Call: {e}")
         
     return result_map
 
@@ -225,7 +242,7 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No CE/PE tokens built for current expiry.")
             return
 
-        print(f"📡 Requesting Safe Object Payload for {stock}: Total Tokens: {len(batch_instruments)}")
+        print(f"📡 Requesting V15.8 Dual Payload for {stock}: Total Tokens: {len(batch_instruments)}")
 
         ltp_data_map = get_dhan_batch_ltp(batch_instruments)
         
@@ -269,7 +286,7 @@ def process_stock_strategy(stock):
                         call_put_diff = diff
 
         if selected_strike is None:
-            print(f"⚠️ {stock}: Mapped data returned 0.0. Retrying in next safe market window.")
+            print(f"⚠️ {stock}: Mapped data returned 0.0. Awaiting valid bypass payload.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -316,7 +333,6 @@ def process_stock_strategy(stock):
 def monitor_live_market():
     for stock in STOCKS_LIST:
         process_stock_strategy(stock)
-        # பங்குகளுக்கு இடையே ரேட் லிமிட்டைத் தவிர்க்க 2 வினாடிகள் கட்டாய ஓய்வு
         time.sleep(2)
 
 def start_dummy_server():
@@ -330,7 +346,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V15.7 - Safe FNO Object Mode)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V15.8 - Strict Bypass Mode)!")
         
     while True:
         now_ist = datetime.now(IST).time()
@@ -339,9 +355,7 @@ if __name__ == "__main__":
         
         if market_start <= now_ist <= market_end:
             monitor_live_market()
-            # லைவ் மார்க்கெட்டில் 60 வினாடிகள் ஓய்வு
             time.sleep(60)
         else:
             monitor_live_market()
-            # மார்க்கெட் இல்லாத நேரத்தில் 5 நிமிடங்கள் ஓய்வு
             time.sleep(300)
