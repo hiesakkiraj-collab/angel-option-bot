@@ -143,7 +143,6 @@ def process_stock_strategy(stock):
         
         inst_type = "OPTIDX" if stock in ["NIFTY", "BANKNIFTY"] else "OPTSTK"
         
-        # 1. குறிப்பிட்ட பங்கை பில்டர் செய்தல்
         df_stock = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[COL_INST_NAME] == inst_type) &
             (DHAN_MASTER_DF[COL_TRADING_SYM].str.startswith(stock.upper(), na=False))
@@ -153,17 +152,13 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No rows found in Master CSV.")
             return
 
-        # 🔥 [FIX] எக்ஸ்பைரி தேதியை டாப்-லெவலில் Naive Datetime ஆக மாற்றி டைப் எர்ரர் வராமல் செய்கிறோம்
         df_stock['PARSED_EXPIRY'] = pd.to_datetime(df_stock[COL_EXPIRY], errors='coerce')
         df_stock = df_stock.dropna(subset=['PARSED_EXPIRY'])
         
-        # Timezone இல்லாத சுத்தமான இன்றைய தேதி அமைப்பு (tz-naive)
         today_now = datetime.now(IST).replace(tzinfo=None)
         today_date = pd.Timestamp(today_now.date())
         
-        # இன்றைய தேதி அல்லது அதற்கு பிந்தைய எக்ஸ்பைரி தேதிகள்
         future_expiries = df_stock[df_stock['PARSED_EXPIRY'] >= today_date]
-        
         if future_expiries.empty:
             print(f"❌ {stock}: No active future expiry dates found.")
             return
@@ -176,10 +171,13 @@ def process_stock_strategy(stock):
         df_stock[COL_STRIKE] = pd.to_numeric(df_stock[COL_STRIKE], errors='coerce')
         df_stock = df_stock.dropna(subset=[COL_STRIKE])
         
-        # Dhan CSV Strike Price 100 மடங்கு அதிகமாக (பைசாவில்) இருந்தால் சரி செய்தல்
-        first_strike = df_stock[COL_STRIKE].iloc[0]
-        if first_strike > 10000 and stock in ["SBIN", "RELIANCE"]:
+        # 🔥 [FIX] Dynamic Strike Price Checking
+        # ஒருவேளை CSV-ல் ஸ்ட்ரைக் ப்ரைஸ் 100 மடங்கு அதிகமாக இருந்தால் (உதாரணம்: SBIN 82000 என்று இருந்தால்) மட்டும் வகுக்க வேண்டும்.
+        # நேரடியாக 820 என்று இருந்தால் வகுக்கக் கூடாது.
+        max_strike_in_df = df_stock[COL_STRIKE].max()
+        if max_strike_in_df > (approx_base * 5):
             df_stock[COL_STRIKE] = df_stock[COL_STRIKE] / 100.0
+            print(f"⚙️ {stock}: Strike prices divided by 100 dynamically.")
 
         unique_strikes = sorted(df_stock[COL_STRIKE].unique())
         closest_strikes = sorted(unique_strikes, key=lambda x: abs(x - approx_base))[:12]
@@ -207,6 +205,9 @@ def process_stock_strategy(stock):
         if not batch_instruments:
             print(f"❌ {stock}: No CE/PE tokens built for current expiry.")
             return
+
+        # ⚙️ லாக்ஸில் என்ன டோக்கன்கள் அனுப்பப்படுகின்றன என்று பார்க்க பிரிண்ட் செய்கிறோம் (Debug)
+        print(f"📡 Requesting Batch Tokens for {stock}: {batch_instruments[:4]}... Total: {len(batch_instruments)}")
 
         ltp_data_map = get_dhan_batch_ltp(batch_instruments, segment="NSE_FO")
         
@@ -250,7 +251,8 @@ def process_stock_strategy(stock):
                         call_put_diff = diff
 
         if selected_strike is None:
-            print(f"⚠️ {stock}: Active expiry tokens returned 0.0. Ensure live market is open or token is verified.")
+            # 💡 [INFO LOG] மார்க்கெட் ஆஃப்லைனில் இருந்தால் டோக்கன்கள் 0.0 என்றுதான் வரும், அதை தெளிவாகக் காட்டுகிறோம்.
+            print(f"⚠️ {stock}: Active expiry tokens returned 0.0. (If Market is CLOSED, this is NORMAL. Bot will fetch fine during Live Market hours).")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -310,7 +312,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V14.7 - Timezone Aligned)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V14.8 - Smart Strike & Debug Mode)!")
         
     while True:
         now_ist = datetime.now(IST).time()
