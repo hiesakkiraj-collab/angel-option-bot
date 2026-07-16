@@ -68,7 +68,6 @@ def download_dhan_scrip_master():
             print("Dhan Scrip Master Downloaded Successfully!")
             
             all_cols = list(df.columns)
-            # F&O-விற்கு சரியான செக்யூரிட்டி ஐடி காலமைத் தேர்ந்தெடுக்கிறோம்
             for col in all_cols:
                 if col in ["SEM_SMST_SECURITY_ID", "SMST_SECURITY_ID", "SECURITY_ID"]:
                     COL_TOKEN = col
@@ -94,7 +93,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.6 Precision Router)
+# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.7 Strict Object Router)
 # ------------------------------------------
 def get_dhan_batch_ltp(instruments_list):
     if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
@@ -107,34 +106,33 @@ def get_dhan_batch_ltp(instruments_list):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    # தனுஷ் v2 ஆவணங்களின்படி F&O-விற்கான தூய்மையான ஸ்ட்ரக்சர் (ஒரே ஒரு கீ மட்டும்)
-    # டோக்கன்களை ஸ்ட்ரிங் பார்மட்டில் துல்லியமாக அனுப்புகிறோம்
-    token_list = [str(item[0]) for item in instruments_list]
+    # 🎯 Dhan v2 F&O-விற்கான 100% அதிகாரப்பூர்வ ஆப்ஜெக்ட் லிஸ்ட் ஸ்ட்ரக்சர்
+    # எக்ஸ்சேஞ்ச் டோக்கன்களை ஸ்ட்ரிங் வடிவில் ஆப்ஜெக்ட்டுக்குள் அடைத்து அனுப்புகிறோம்
+    token_objects = [{"securityId": str(item[0])} for item in instruments_list]
     
-    # 🎯 பிளான் A: Dhan அதிகாரப்பூர்வ F&O செக்மென்ட் ஸ்ட்ரக்சர்
     payload = {
-        "NSE_FNO": token_list
+        "NSE_FNO": token_objects
     }
     
     result_map = {}
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=6)
+        # 429 எர்ரரைத் தவிர்க்க கால்களுக்கு இடையே சிறிய கேப்
+        time.sleep(0.5) 
+        response = requests.post(url, headers=headers, json=payload, timeout=7)
         
-        # ஒருவேளை NSE_FNO வேலை செய்யாமல் 400 அல்லது காலியாக வந்தால், பிளான் B (DERIVATIVE) முயற்சிக்கும்
-        if response.status_code != 200 or not response.json().get("data"):
-            print(f"🔄 Plan A (NSE_FNO) failed or empty. Trying Plan B (DERIVATIVE)...")
-            alt_payload = {
-                "DERIVATIVE": token_list
-            }
-            response = requests.post(url, headers=headers, json=alt_payload, timeout=6)
+        # ஒருவேளை Rate Limit ஹிட் அடித்தால் 2 வினாடிகள் காத்திருந்து மீண்டும் முயலும் (Retry Mechanism)
+        if response.status_code == 429:
+            print("⚠️ Rate Limit (429) hit. Backing off for 2 seconds...")
+            time.sleep(2)
+            response = requests.post(url, headers=headers, json=payload, timeout=7)
 
         if response.status_code == 200:
             data = response.json()
-            print(f"📡 [DEBUG V15.6 RAW RESPONSE]: {str(data)[:350]}")
+            print(f"📡 [DEBUG V15.7 RAW RESPONSE]: {str(data)[:350]}")
             
             resp_data = data.get("data", data.get("Data", {}))
             if resp_data:
-                # எக்ஸ்சேஞ்ச் டேட்டாவை எக்ஸ்ட்ராக்ட் செய்கிறோம்
+                # NSE_FNO அல்லது எந்த கீயில் வந்தாலும் பிரித்தெடுக்கும் டைனமிக் லூப்
                 for key in resp_data.keys():
                     segment_data = resp_data.get(key, {})
                     if isinstance(segment_data, dict):
@@ -149,7 +147,7 @@ def get_dhan_batch_ltp(instruments_list):
             print(f"❌ Batch HTTP Error {response.status_code}: {response.text}")
             
     except Exception as e:
-        print(f"❌ Exception in V15.6 Precision Batch LTP Call: {e}")
+        print(f"❌ Exception in V15.7 Strict Batch LTP Call: {e}")
         
     return result_map
 
@@ -227,7 +225,7 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No CE/PE tokens built for current expiry.")
             return
 
-        print(f"📡 Requesting Precision Payload for {stock}: Total Tokens: {len(batch_instruments)}")
+        print(f"📡 Requesting Safe Object Payload for {stock}: Total Tokens: {len(batch_instruments)}")
 
         ltp_data_map = get_dhan_batch_ltp(batch_instruments)
         
@@ -271,7 +269,7 @@ def process_stock_strategy(stock):
                         call_put_diff = diff
 
         if selected_strike is None:
-            print(f"⚠️ {stock}: API Response mapped to 0.0. Awaiting live feed connection.")
+            print(f"⚠️ {stock}: Mapped data returned 0.0. Retrying in next safe market window.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -318,7 +316,8 @@ def process_stock_strategy(stock):
 def monitor_live_market():
     for stock in STOCKS_LIST:
         process_stock_strategy(stock)
-        time.sleep(1)
+        # பங்குகளுக்கு இடையே ரேட் லிமிட்டைத் தவிர்க்க 2 வினாடிகள் கட்டாய ஓய்வு
+        time.sleep(2)
 
 def start_dummy_server():
     port = int(os.environ.get("PORT", 10000))
@@ -331,7 +330,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V15.6 - Precision Mode)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V15.7 - Safe FNO Object Mode)!")
         
     while True:
         now_ist = datetime.now(IST).time()
@@ -340,7 +339,9 @@ if __name__ == "__main__":
         
         if market_start <= now_ist <= market_end:
             monitor_live_market()
+            # லைவ் மார்க்கெட்டில் 60 வினாடிகள் ஓய்வு
             time.sleep(60)
         else:
             monitor_live_market()
+            # மார்க்கெட் இல்லாத நேரத்தில் 5 நிமிடங்கள் ஓய்வு
             time.sleep(300)
