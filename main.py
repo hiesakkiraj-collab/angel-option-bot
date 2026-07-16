@@ -68,6 +68,7 @@ def download_dhan_scrip_master():
             print("Dhan Scrip Master Downloaded Successfully!")
             
             all_cols = list(df.columns)
+            # F&O-விற்கு சரியான செக்யூரிட்டி ஐடி காலமைத் தேர்ந்தெடுக்கிறோம்
             for col in all_cols:
                 if col in ["SEM_SMST_SECURITY_ID", "SMST_SECURITY_ID", "SECURITY_ID"]:
                     COL_TOKEN = col
@@ -93,7 +94,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.5 Breakthrough Adaptor)
+# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.6 Precision Router)
 # ------------------------------------------
 def get_dhan_batch_ltp(instruments_list):
     if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
@@ -106,37 +107,36 @@ def get_dhan_batch_ltp(instruments_list):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    # 🎯 ஸ்ட்ரக்சர் 1: Dhan F&O-விற்கான இறுதிப் பட்டியல் மற்றும் ஆப்ஜெக்ட் வடிவம்
-    token_objects = [{"securityId": str(item[0])} for item in instruments_list]
-    # 🎯 ஸ்ட்ரக்சர் 2: மாற்று வடிவம் (வெறும் ஸ்ட்ரிங் லிஸ்ட்)
-    token_strings = [str(item[0]) for item in instruments_list]
+    # தனுஷ் v2 ஆவணங்களின்படி F&O-விற்கான தூய்மையான ஸ்ட்ரக்சர் (ஒரே ஒரு கீ மட்டும்)
+    # டோக்கன்களை ஸ்ட்ரிங் பார்மட்டில் துல்லியமாக அனுப்புகிறோம்
+    token_list = [str(item[0]) for item in instruments_list]
     
+    # 🎯 பிளான் A: Dhan அதிகாரப்பூர்வ F&O செக்மென்ட் ஸ்ட்ரக்சர்
     payload = {
-        "NSE_FNO": token_objects,
-        "NSE_FO": token_objects,
-        "DERIVATIVE": token_objects,
-        "instruments": token_objects,
-        # சில பிரத்யேக அப்டேட்களுக்காக மாற்று ஸ்ட்ரக்சர்
-        "NSE_FNO_LIST": token_strings
+        "NSE_FNO": token_list
     }
     
     result_map = {}
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=7)
+        response = requests.post(url, headers=headers, json=payload, timeout=6)
+        
+        # ஒருவேளை NSE_FNO வேலை செய்யாமல் 400 அல்லது காலியாக வந்தால், பிளான் B (DERIVATIVE) முயற்சிக்கும்
+        if response.status_code != 200 or not response.json().get("data"):
+            print(f"🔄 Plan A (NSE_FNO) failed or empty. Trying Plan B (DERIVATIVE)...")
+            alt_payload = {
+                "DERIVATIVE": token_list
+            }
+            response = requests.post(url, headers=headers, json=alt_payload, timeout=6)
+
         if response.status_code == 200:
             data = response.json()
-            print(f"📡 [DEBUG V15.5 RAW RESPONSE]: {str(data)[:350]}")
+            print(f"📡 [DEBUG V15.6 RAW RESPONSE]: {str(data)[:350]}")
             
             resp_data = data.get("data", data.get("Data", {}))
-            
-            if resp_data and resp_data != {}:
-                # சாத்தியமுள்ள அனைத்து செக்மென்ட் கீகளையும் ஸ்கேன் செய்கிறோம்
-                for segment_key in ["NSE_FNO", "NSE_FO", "DERIVATIVE", "instruments", "NSE"]:
-                    segment_data = resp_data.get(segment_key, {}) if isinstance(resp_data, dict) else None
-                    if not segment_data:
-                        continue
-                        
-                    # Dictionary Mode Extract
+            if resp_data:
+                # எக்ஸ்சேஞ்ச் டேட்டாவை எக்ஸ்ட்ராக்ட் செய்கிறோம்
+                for key in resp_data.keys():
+                    segment_data = resp_data.get(key, {})
                     if isinstance(segment_data, dict):
                         for item in instruments_list:
                             token_id = int(item[0])
@@ -145,32 +145,11 @@ def get_dhan_batch_ltp(instruments_list):
                                 ltp = float(token_info.get("ltp", token_info.get("lastPrice", 0.0)))
                                 if ltp > 0:
                                     result_map[token_id] = ltp
-                                    
-                    # List Mode Extract
-                    elif isinstance(segment_data, list):
-                        for node in segment_data:
-                            t_id = node.get("securityId", node.get("SecurityId"))
-                            if t_id:
-                                ltp = float(node.get("ltp", node.get("lastPrice", 0.0)))
-                                result_map[int(t_id)] = ltp
-                                
-                # ஒருவேளை ரெஸ்பான்ஸ் ரூட்-லேயே (Root object) லிஸ்ட்டாகவோ அல்லது டைரக்ட் மேப்பாகவோ இருந்தால்
-                if not result_map:
-                    if isinstance(resp_data, dict):
-                        for item in instruments_list:
-                            token_id = int(item[0])
-                            token_info = resp_data.get(str(token_id), resp_data.get(token_id, {}))
-                            if isinstance(token_info, dict) and "ltp" in token_info:
-                                result_map[token_id] = float(token_info["ltp"])
-                    elif isinstance(resp_data, list):
-                        for node in resp_data:
-                            t_id = node.get("securityId", node.get("SecurityId"))
-                            if t_id:
-                                result_map[int(t_id)] = float(node.get("ltp", 0.0))
         else:
             print(f"❌ Batch HTTP Error {response.status_code}: {response.text}")
+            
     except Exception as e:
-        print(f"❌ Exception in V15.5 Batch LTP Call: {e}")
+        print(f"❌ Exception in V15.6 Precision Batch LTP Call: {e}")
         
     return result_map
 
@@ -248,7 +227,7 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No CE/PE tokens built for current expiry.")
             return
 
-        print(f"📡 Requesting V15.5 Target Payload for {stock}: Total Tokens: {len(batch_instruments)}")
+        print(f"📡 Requesting Precision Payload for {stock}: Total Tokens: {len(batch_instruments)}")
 
         ltp_data_map = get_dhan_batch_ltp(batch_instruments)
         
@@ -292,7 +271,7 @@ def process_stock_strategy(stock):
                         call_put_diff = diff
 
         if selected_strike is None:
-            print(f"⚠️ {stock}: API Response objects returned 0.0. Awaiting valid live stream mapping.")
+            print(f"⚠️ {stock}: API Response mapped to 0.0. Awaiting live feed connection.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -352,7 +331,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V15.5 - FNO Breakthrough Mode)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V15.6 - Precision Mode)!")
         
     while True:
         now_ist = datetime.now(IST).time()
