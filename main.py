@@ -93,9 +93,9 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. Batch Live LTP API Call 
+# 3. 🔥 Dhan Market Feed LTP Batch API Call (v2 Official Format)
 # ------------------------------------------
-def get_dhan_batch_ltp(instruments_list, segment="IDX_DERIVATIVE"):
+def get_dhan_batch_ltp(instruments_list, segment="SEC_DERIVATIVE"):
     if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
         return {}
         
@@ -106,14 +106,11 @@ def get_dhan_batch_ltp(instruments_list, segment="IDX_DERIVATIVE"):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    # 🔥 [FIX] Dhan API-ன் அதிகாரப்பூர்வ ஆவணங்களின்படி 'exchangeSegment' அமைய வேண்டும்.
-    # பங்குகளின் எஃப்&ஓ-விற்கு (Stock Options) 'NSE_FO' என்பது சில சமயம் 'IDX_DERIVATIVE' 
-    # அல்லது 'SEC_DERIVATIVE' ஆக இருக்கும். பாதுகாப்பிற்காக அதிகாரப்பூர்வ String வடிவமாக மாற்றி அனுப்புகிறோம்.
+    # 🔥 [FIX] Dhan API v2 ஆவணங்களின்படி பாய்லோடு அமைப்பை மாற்றியுள்ளோம்
+    # Format: { "SEC_DERIVATIVE": ["token1", "token2", ...] }
+    tokens_only = [str(item[0]) for item in instruments_list]
     payload = {
-        "instruments": [
-            {"exchangeSegment": str(segment), "securityId": str(item[0])}
-            for item in instruments_list
-        ]
+        segment: tokens_only
     }
     
     result_map = {}
@@ -121,11 +118,18 @@ def get_dhan_batch_ltp(instruments_list, segment="IDX_DERIVATIVE"):
         response = requests.post(url, headers=headers, json=payload, timeout=7)
         if response.status_code == 200:
             data = response.json()
+            # Dhan ரெஸ்பான்ஸில் இருந்து டேட்டாவைத் துல்லியமாக எடுத்தல்
             resp_data = data.get("data", data.get("Data", {}))
-            for item in instruments_list:
-                sec_id = str(item[0])
-                ltp = float(resp_data.get(sec_id, {}).get("ltp", 0.0))
-                result_map[int(sec_id)] = ltp
+            
+            # சில சமயம் செக்மென்ட் கீ-ன் உள்ளே டேட்டா வரும், அல்லது நேரடியாக வரும்
+            segment_data = resp_data.get(segment, resp_data)
+            
+            for token_str in tokens_only:
+                token_id = int(token_str)
+                # Dhan API தங்களுக்குள் token_id அல்லது tradingSymbol கீயைப் பயன்படுத்தும்
+                token_info = segment_data.get(token_str, {})
+                ltp = float(token_info.get("ltp", token_info.get("lastPrice", 0.0)))
+                result_map[token_id] = ltp
         else:
             print(f"❌ Batch HTTP Error {response.status_code}: {response.text}")
     except Exception as e:
@@ -144,7 +148,6 @@ def process_stock_strategy(stock):
         gap_limit = gap / 2
         approx_base = STOCK_APPROX_PRICES.get(stock, 1000.0)
         
-        # செக்மென்ட் மேப்பிங்
         inst_type = "OPTIDX" if stock in ["NIFTY", "BANKNIFTY"] else "OPTSTK"
         api_segment = "IDX_DERIVATIVE" if stock in ["NIFTY", "BANKNIFTY"] else "SEC_DERIVATIVE"
         
@@ -208,9 +211,8 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No CE/PE tokens built for current expiry.")
             return
 
-        print(f"📡 Requesting [{api_segment}] Batch Tokens for {stock}: Total: {len(batch_instruments)}")
+        print(f"📡 Requesting [{api_segment}] Batch Format for {stock}: Total Tokens: {len(batch_instruments)}")
 
-        # 🔥 api_segment-ஐ பராமீட்டராக அனுப்புகிறோம்
         ltp_data_map = get_dhan_batch_ltp(batch_instruments, segment=api_segment)
         
         selected_strike = None
@@ -253,7 +255,7 @@ def process_stock_strategy(stock):
                         call_put_diff = diff
 
         if selected_strike is None:
-            print(f"⚠️ {stock}: Active expiry tokens returned 0.0. Ensure Segment or Auth Token is correct.")
+            print(f"⚠️ {stock}: Official API response mapping returned 0.0. Please check if Dhan Auth Token is valid.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -313,7 +315,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V14.9 - Official Segment Fix)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V15.0 - Strict Payload Formatted)!")
         
     while True:
         now_ist = datetime.now(IST).time()
