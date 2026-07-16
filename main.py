@@ -93,7 +93,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. 🔥 Dhan Market Feed LTP Batch API Call (v2 100% Match)
+# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.2 Hybrid Adaptor)
 # ------------------------------------------
 def get_dhan_batch_ltp(instruments_list, segment="NSE_FO"):
     if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
@@ -106,8 +106,6 @@ def get_dhan_batch_ltp(instruments_list, segment="NSE_FO"):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    # 🔥 [FIX] Dhan API v2 ஆவணங்களின்படி 100% சரியான போய்லோடு வடிவம்:
-    # { "NSE_FO": [{"securityId": "138995"}, {"securityId": "138996"}] }
     payload = {
         segment: [{"securityId": str(item[0])} for item in instruments_list]
     }
@@ -117,23 +115,41 @@ def get_dhan_batch_ltp(instruments_list, segment="NSE_FO"):
         response = requests.post(url, headers=headers, json=payload, timeout=7)
         if response.status_code == 200:
             data = response.json()
+            
+            # ⚙️ [DEBUG PRINT] API-ல் இருந்து உண்மையில் என்ன டேட்டா வருகிறது என்று லாக்ஸில் பார்க்கிறோம்.
+            # இது ஒருமுறை ரன் ஆனதும் எங்கு தவறு நடக்கிறது என்று பிடித்துவிடலாம்!
+            print(f"📡 [DEBUG RESPONSE] Full API Raw Output snippet: {str(data)[:300]}")
+            
             resp_data = data.get("data", data.get("Data", {}))
             
-            # தனுஷ் API ரெஸ்பான்ஸில் இருந்து டேட்டாவை பாதுகாப்பாக எடுக்கிறோம்
-            segment_data = resp_data.get(segment, resp_data)
-            
-            for item in instruments_list:
-                token_id = int(item[0])
-                token_str = str(token_id)
-                
-                # லூப்பில் செக்யூரிட்டி ஐடி கீயை தேடுகிறோம்
-                token_info = segment_data.get(token_str, {})
-                if not token_info:
-                    # சில சமயம் ரெஸ்பான்ஸ் நேரடியாக லிஸ்ட்டாகவோ அல்லது வேறு வடிவிலோ இருந்தால்
-                    token_info = resp_data.get(token_str, {})
-                    
-                ltp = float(token_info.get("ltp", token_info.get("lastPrice", 0.0)))
-                result_map[token_id] = ltp
+            # 🤝 லாஜிக் 1: ரெஸ்பான்ஸ் டிக்ஸ்னரியாக (Key-Value) வந்தால்
+            if isinstance(resp_data, dict):
+                segment_data = resp_data.get(segment, resp_data)
+                if isinstance(segment_data, dict):
+                    for item in instruments_list:
+                        token_id = int(item[0])
+                        token_info = segment_data.get(str(token_id), segment_data.get(token_id, {}))
+                        if token_info:
+                            ltp = float(token_info.get("ltp", token_info.get("lastPrice", 0.0)))
+                            result_map[token_id] = ltp
+                            
+            # 🤝 லாஜிக் 2: ரெஸ்பான்ஸ் ஒரு லிஸ்ட்டாக (List of Objects) வந்தால்
+            if not result_map and isinstance(resp_data, list):
+                for node in resp_data:
+                    t_id = node.get("securityId", node.get("SecurityId"))
+                    if t_id:
+                        ltp = float(node.get("ltp", node.get("lastPrice", 0.0)))
+                        result_map[int(t_id)] = ltp
+                        
+            # 🤝 லாஜிக் 3: மாற்று செக்மென்ட் கீ-ன் உள்ளே லிஸ்ட்டாக இருந்தால்
+            if not result_map and isinstance(resp_data, dict):
+                segment_list = resp_data.get(segment, [])
+                if isinstance(segment_list, list):
+                    for node in segment_list:
+                        t_id = node.get("securityId", node.get("SecurityId"))
+                        if t_id:
+                            ltp = float(node.get("ltp", node.get("lastPrice", 0.0)))
+                            result_map[int(t_id)] = ltp
         else:
             print(f"❌ Batch HTTP Error {response.status_code}: {response.text}")
     except Exception as e:
@@ -152,7 +168,6 @@ def process_stock_strategy(stock):
         gap_limit = gap / 2
         approx_base = STOCK_APPROX_PRICES.get(stock, 1000.0)
         
-        # Dhan எக்ஸ்சேஞ்ச் செக்மென்ட் மேப்பிங்
         inst_type = "OPTIDX" if stock in ["NIFTY", "BANKNIFTY"] else "OPTSTK"
         api_segment = "NSE_FNO" if stock in ["NIFTY", "BANKNIFTY"] else "NSE_FO"
         
@@ -320,7 +335,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V15.1 - Final Structure Fixed)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V15.2 - Response Adaptive Mode)!")
         
     while True:
         now_ist = datetime.now(IST).time()
