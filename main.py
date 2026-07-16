@@ -153,12 +153,15 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No rows found in Master CSV.")
             return
 
-        # 🔥 [FIX] எக்ஸ்பைரி தேதியை சரியான Datetime Format-க்கு மாற்றி தற்போதைய எக்ஸ்பைரியை மட்டும் பில்டர் செய்கிறோம்
+        # 🔥 [FIX] எக்ஸ்பைரி தேதியை டாப்-லெவலில் Naive Datetime ஆக மாற்றி டைப் எர்ரர் வராமல் செய்கிறோம்
         df_stock['PARSED_EXPIRY'] = pd.to_datetime(df_stock[COL_EXPIRY], errors='coerce')
         df_stock = df_stock.dropna(subset=['PARSED_EXPIRY'])
         
-        today_date = datetime.now(IST).replace(hour=0, minute=0, second=0, microsecond=0)
-        # இன்றைய தேதிக்கு சமமாகவோ அல்லது அதற்கு அடுத்தோ இருக்கும் எக்ஸ்பைரிகள்
+        # Timezone இல்லாத சுத்தமான இன்றைய தேதி அமைப்பு (tz-naive)
+        today_now = datetime.now(IST).replace(tzinfo=None)
+        today_date = pd.Timestamp(today_now.date())
+        
+        # இன்றைய தேதி அல்லது அதற்கு பிந்தைய எக்ஸ்பைரி தேதிகள்
         future_expiries = df_stock[df_stock['PARSED_EXPIRY'] >= today_date]
         
         if future_expiries.empty:
@@ -307,7 +310,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V14.6 - Expiry Engine Fix)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V14.7 - Timezone Aligned)!")
         
     while True:
         now_ist = datetime.now(IST).time()
