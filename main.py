@@ -93,7 +93,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.4 Universal Router)
+# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.5 Breakthrough Adaptor)
 # ------------------------------------------
 def get_dhan_batch_ltp(instruments_list):
     if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
@@ -106,13 +106,18 @@ def get_dhan_batch_ltp(instruments_list):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    # தனுஷ் v2-ல் உள்ள அத்தனை சாத்தியமான கீகளையும் ஒரே பேலோடில் அனுப்புகிறோம்!
+    # 🎯 ஸ்ட்ரக்சர் 1: Dhan F&O-விற்கான இறுதிப் பட்டியல் மற்றும் ஆப்ஜெக்ட் வடிவம்
     token_objects = [{"securityId": str(item[0])} for item in instruments_list]
+    # 🎯 ஸ்ட்ரக்சர் 2: மாற்று வடிவம் (வெறும் ஸ்ட்ரிங் லிஸ்ட்)
+    token_strings = [str(item[0]) for item in instruments_list]
     
     payload = {
+        "NSE_FNO": token_objects,
         "NSE_FO": token_objects,
         "DERIVATIVE": token_objects,
-        "NSE": token_objects
+        "instruments": token_objects,
+        # சில பிரத்யேக அப்டேட்களுக்காக மாற்று ஸ்ட்ரக்சர்
+        "NSE_FNO_LIST": token_strings
     }
     
     result_map = {}
@@ -120,19 +125,18 @@ def get_dhan_batch_ltp(instruments_list):
         response = requests.post(url, headers=headers, json=payload, timeout=7)
         if response.status_code == 200:
             data = response.json()
-            print(f"📡 [DEBUG V15.4 RAW RESPONSE]: {str(data)[:350]}")
+            print(f"📡 [DEBUG V15.5 RAW RESPONSE]: {str(data)[:350]}")
             
             resp_data = data.get("data", data.get("Data", {}))
             
-            if resp_data:
-                # 3 கீகளிலும் மாற்றி மாற்றி செக் செய்கிறோம்
-                for segment_key in ["NSE_FO", "DERIVATIVE", "NSE", "data", "Data"]:
-                    segment_data = resp_data.get(segment_key, {}) if isinstance(resp_data, dict) else resp_data
-                    
+            if resp_data and resp_data != {}:
+                # சாத்தியமுள்ள அனைத்து செக்மென்ட் கீகளையும் ஸ்கேன் செய்கிறோம்
+                for segment_key in ["NSE_FNO", "NSE_FO", "DERIVATIVE", "instruments", "NSE"]:
+                    segment_data = resp_data.get(segment_key, {}) if isinstance(resp_data, dict) else None
                     if not segment_data:
                         continue
                         
-                    # Dictionary மேப்பிங் லூப்
+                    # Dictionary Mode Extract
                     if isinstance(segment_data, dict):
                         for item in instruments_list:
                             token_id = int(item[0])
@@ -142,7 +146,7 @@ def get_dhan_batch_ltp(instruments_list):
                                 if ltp > 0:
                                     result_map[token_id] = ltp
                                     
-                    # List மேப்பிங் லூப் (பாதுகாப்பிற்கு)
+                    # List Mode Extract
                     elif isinstance(segment_data, list):
                         for node in segment_data:
                             t_id = node.get("securityId", node.get("SecurityId"))
@@ -150,12 +154,23 @@ def get_dhan_batch_ltp(instruments_list):
                                 ltp = float(node.get("ltp", node.get("lastPrice", 0.0)))
                                 result_map[int(t_id)] = ltp
                                 
-                    if result_map:
-                        break
+                # ஒருவேளை ரெஸ்பான்ஸ் ரூட்-லேயே (Root object) லிஸ்ட்டாகவோ அல்லது டைரக்ட் மேப்பாகவோ இருந்தால்
+                if not result_map:
+                    if isinstance(resp_data, dict):
+                        for item in instruments_list:
+                            token_id = int(item[0])
+                            token_info = resp_data.get(str(token_id), resp_data.get(token_id, {}))
+                            if isinstance(token_info, dict) and "ltp" in token_info:
+                                result_map[token_id] = float(token_info["ltp"])
+                    elif isinstance(resp_data, list):
+                        for node in resp_data:
+                            t_id = node.get("securityId", node.get("SecurityId"))
+                            if t_id:
+                                result_map[int(t_id)] = float(node.get("ltp", 0.0))
         else:
             print(f"❌ Batch HTTP Error {response.status_code}: {response.text}")
     except Exception as e:
-        print(f"❌ Exception in Universal Batch LTP Call: {e}")
+        print(f"❌ Exception in V15.5 Batch LTP Call: {e}")
         
     return result_map
 
@@ -233,7 +248,7 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No CE/PE tokens built for current expiry.")
             return
 
-        print(f"📡 Requesting Universal Payload for {stock}: Total Tokens: {len(batch_instruments)}")
+        print(f"📡 Requesting V15.5 Target Payload for {stock}: Total Tokens: {len(batch_instruments)}")
 
         ltp_data_map = get_dhan_batch_ltp(batch_instruments)
         
@@ -277,7 +292,7 @@ def process_stock_strategy(stock):
                         call_put_diff = diff
 
         if selected_strike is None:
-            print(f"⚠️ {stock}: API Response objects returned 0.0. Awaiting valid segment key mapping.")
+            print(f"⚠️ {stock}: API Response objects returned 0.0. Awaiting valid live stream mapping.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -337,7 +352,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V15.4 - Universal Router Mode)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V15.5 - FNO Breakthrough Mode)!")
         
     while True:
         now_ist = datetime.now(IST).time()
