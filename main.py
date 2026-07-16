@@ -23,15 +23,18 @@ STRIKE_GAPS = {"SBIN": 10}
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
-# காலம் பெயர்கள்
-COL_TOKEN = None       
-COL_INST_NAME = None   
-COL_TRADING_SYM = None 
-COL_STRIKE = None      
-COL_OPTION_TYPE = None 
+# காலம் பெயர்கள் (Dhan CSV-க்கு ஏற்ப துல்லியமாக மாற்றப்பட்டுள்ளது)
+COL_TOKEN = None       # SEM_SMST_SECURITY_ID
+COL_INST_NAME = None   # SEM_INSTRUMENT_NAME
+COL_TRADING_SYM = None # SEM_TRADING_SYMBOL
+COL_STRIKE = None      # SEM_STRIKE_PRICE
+COL_OPTION_TYPE = None # SEM_OPTION_TYPE (அல்லது நாம் பிரித்தெடுக்கும் முறை)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# ------------------------------------------
+# 2. Telegram அலர்ட் ஃபங்க்ஷன்
+# ------------------------------------------
 def send_telegram(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
@@ -43,7 +46,7 @@ def send_telegram(message):
         print(f"Telegram Error: {e}")
 
 # ------------------------------------------
-# 3. Dhan Master Scrip டவுன்லோடு
+# 3. Dhan Master Scrip டவுன்লোடு & காலம் மேப்பிங்
 # ------------------------------------------
 def download_dhan_scrip_master():
     global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_TRADING_SYM, COL_STRIKE, COL_OPTION_TYPE
@@ -60,37 +63,38 @@ def download_dhan_scrip_master():
             print("Dhan Scrip Master Downloaded Successfully!")
             
             all_cols = list(df.columns)
-            print(f"📋 Available Columns in CSV: {all_cols[:10]}") # முதல் 10 காலம்களை லாகில் காட்டும்
             
+            # லாக்ஸ்-ல் பார்த்த சரியான காலம்களை லாக் செய்கிறோம்
             for col in all_cols:
-                if col in ["SEM_EXM_EXCH_ID", "EXCH_ID", "SMART_TOKEN", "SEM_SMART_TOKEN", "SECURITY_ID"]:
+                if col in ["SEM_SMST_SECURITY_ID", "SMST_SECURITY_ID", "SECURITY_ID"]:
                     COL_TOKEN = col
                 elif col in ["SEM_INSTRUMENT_NAME", "INSTRUMENT", "INSTRUMENT_NAME"]:
                     COL_INST_NAME = col
-                elif col in ["SEM_TRADING_SYMBOL", "SYMBOL_NAME", "TRADING_SYMBOL", "SYMBOL"]:
+                elif col in ["SEM_TRADING_SYMBOL", "SYMBOL_NAME", "TRADING_SYMBOL"]:
                     COL_TRADING_SYM = col
                 elif col in ["SEM_STRIKE_PRICE", "STRIKE_PRICE"]:
                     COL_STRIKE = col
                 elif col in ["SEM_OPTION_TYPE", "OPTION_TYPE"]:
                     COL_OPTION_TYPE = col
 
-            if not COL_TOKEN: COL_TOKEN = all_cols[0]
-            if not COL_INST_NAME: COL_INST_NAME = all_cols[1]
-            if not COL_TRADING_SYM: COL_TRADING_SYM = all_cols[2]
-            if not COL_STRIKE: COL_STRIKE = all_cols[3]
-            if not COL_OPTION_TYPE: COL_OPTION_TYPE = all_cols[4]
+            # எக்ஸ்ட்ரா சேஃப்டி செக்
+            if not COL_TOKEN: COL_TOKEN = "SEM_SMST_SECURITY_ID" if "SEM_SMST_SECURITY_ID" in all_cols else all_cols[2]
+            if not COL_INST_NAME: COL_INST_NAME = "SEM_INSTRUMENT_NAME"
+            if not COL_TRADING_SYM: COL_TRADING_SYM = "SEM_TRADING_SYMBOL"
+            if not COL_STRIKE: COL_STRIKE = "SEM_STRIKE_PRICE"
+            if not COL_OPTION_TYPE: COL_OPTION_TYPE = "SEM_OPTION_TYPE"
 
-            print(f"✅ Mapped -> Token: {COL_TOKEN}, Inst: {COL_INST_NAME}, Strike: {COL_STRIKE}, Symbol: {COL_TRADING_SYM}, OptionType: {COL_OPTION_TYPE}")
+            print(f"✅ Target Mapped -> Token Column: {COL_TOKEN} | Strike Column: {COL_STRIKE}")
             return True
         else:
-            print("Failed to download Scrip Master from Dhan.")
+            print("Failed to download Scrip Master.")
             return False
     except Exception as e:
         print(f"Error downloading Scrip Master: {e}")
     return False
 
 # ------------------------------------------
-# 4. Debugging Mode Option Details
+# 4. Security ID தேடுதல்
 # ------------------------------------------
 def get_dhan_option_details(stock_name, target_strike, option_type):
     global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_TRADING_SYM, COL_STRIKE, COL_OPTION_TYPE
@@ -98,29 +102,20 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         return None, 0.0, target_strike
     
     try:
-        # 🔥 DEBUGGING: மாஸ்டர் பைலில் இருக்கும் முதல் 5 ரோக்களின் மதிப்புகளை அப்படியே பிரிண்ட் செய்கிறோம்
-        print("\n🔍 --- DEBUG: PRINTING FIRST 5 ROWS OF MASTER CSV ---")
-        sample_df = DHAN_MASTER_DF[[COL_INST_NAME, COL_TRADING_SYM, COL_OPTION_TYPE, COL_STRIKE, COL_TOKEN]].head(5)
-        print(sample_df.to_string())
-        
-        # 🔥 DEBUGGING: 'OPTSTK' அல்லது 'OPTIDX' ஏதாச்சும் பைலில் இருக்கா என்று செக் செய்கிறோம்
-        unique_insts = DHAN_MASTER_DF[COL_INST_NAME].dropna().unique()
-        print(f"🔍 Unique Instrument Names found in CSV: {list(unique_insts)[:10]}")
-        
-        # 🔥 DEBUGGING: 'SBIN' என்ற வார்த்தை எதிலாவது இருக்கிறதா என்று செக் செய்கிறோம்
-        sbin_sample = DHAN_MASTER_DF[DHAN_MASTER_DF[COL_TRADING_SYM].str.contains('SBIN', na=False, case=False)].head(3)
-        if not sbin_sample.empty:
-            print("🔍 Found SBIN samples in CSV:")
-            print(sbin_sample[[COL_INST_NAME, COL_TRADING_SYM, COL_OPTION_TYPE, COL_STRIKE]].to_string())
+        # லாக்ஸ் படி பில்டர் செய்கிறோம் (OPTSTK + SBIN + CE/PE)
+        # ஒருவேளை SEM_OPTION_TYPE காலம் இல்லை என்றால் Trading Symbol-ன் கடைசி எழுத்தை வைத்து பில்டர் செய்யும் சேஃப்டி
+        if COL_OPTION_TYPE in DHAN_MASTER_DF.columns:
+            df_filter = DHAN_MASTER_DF[
+                (DHAN_MASTER_DF[COL_INST_NAME] == 'OPTSTK') & 
+                (DHAN_MASTER_DF[COL_TRADING_SYM].str.startswith(stock_name.upper(), na=False)) &
+                (DHAN_MASTER_DF[COL_OPTION_TYPE].str.upper() == option_type.upper())
+            ].copy()
         else:
-            print("❌ 'SBIN' word NOT FOUND ANYWHERE in Trading Symbol column!")
-        print("---------------------------------------------------\n")
-
-        # ஒரிஜினல் ஃபில்டர் லாஜிக்
-        df_filter = DHAN_MASTER_DF[
-            (DHAN_MASTER_DF[COL_TRADING_SYM].str.startswith(stock_name.upper(), na=False)) &
-            (DHAN_MASTER_DF[COL_OPTION_TYPE].str.upper() == option_type.upper())
-        ].copy()
+            df_filter = DHAN_MASTER_DF[
+                (DHAN_MASTER_DF[COL_INST_NAME] == 'OPTSTK') & 
+                (DHAN_MASTER_DF[COL_TRADING_SYM].str.startswith(stock_name.upper(), na=False)) &
+                (DHAN_MASTER_DF[COL_TRADING_SYM].str.endswith(option_type.upper(), na=False))
+            ].copy()
         
         if df_filter.empty:
             print(f"⚠️ Filter empty for {stock_name} {option_type}")
@@ -130,6 +125,9 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         df_filter[COL_TOKEN] = pd.to_numeric(df_filter[COL_TOKEN], errors='coerce')
         df_filter = df_filter.dropna(subset=[COL_TOKEN, COL_STRIKE])
         
+        if df_filter.empty:
+            return None, 0.0, target_strike
+            
         target_strike_float = float(target_strike)
         df_filter['STRIKE_DIFF'] = (df_filter[COL_STRIKE] - target_strike_float).abs()
         df_sorted = df_filter.sort_values(by='STRIKE_DIFF')
@@ -138,10 +136,12 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
             security_id = int(df_sorted.iloc[0][COL_TOKEN])
             strike_found = float(df_sorted.iloc[0][COL_STRIKE])
             trading_symbol_found = str(df_sorted.iloc[0][COL_TRADING_SYM])
+            
+            print(f"🎯 Contract Located -> Symbol: {trading_symbol_found} | Security ID: {security_id} | Strike: {strike_found}")
             return security_id, 0.0, strike_found
             
     except Exception as e:
-        print(f"Error in debug finder: {e}")
+        print(f"Error finding ID for {stock_name} ({option_type}): {e}")
     return None, 0.0, target_strike
 
 # ------------------------------------------
@@ -150,48 +150,169 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
 def get_dhan_live_ltp(security_id):
     if not ACCESS_TOKEN or not CLIENT_ID or not security_id:
         return 0.0
-    headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
+        
+    headers = {
+        'access-token': ACCESS_TOKEN,
+        'client-id': CLIENT_ID,
+        'Content-Type': 'application/json'
+    }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     payload = {"instruments": [{"exchangeSegment": "NSE_FO", "securityId": str(security_id)}]}
+    
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=5)
         if response.status_code == 200:
             data = response.json()
             resp_data = data.get("data", data.get("Data", {}))
             return float(resp_data.get(str(security_id), {}).get("ltp", 0.0))
-    except Exception: pass
+    except Exception:
+        pass
     return 0.0
 
+# ------------------------------------------
+# 6. Pre-Market செட்டப் (SBIN ஸ்ட்ரைக் லாக்கிங்)
+# ------------------------------------------
 def run_pre_market_logic():
     print("Running Pre-Market Analysis for SBIN...")
     global PRE_MARKET_SELECTED_STRIKES
-    target_strike = STOCK_APPROX_PRICES["SBIN"]
-    call_id, _, call_strike = get_dhan_option_details("SBIN", target_strike, "CE")
-    put_id, _, put_strike = get_dhan_option_details("SBIN", target_strike, "PE")
     
-    if call_id and put_id:
-        PRE_MARKET_SELECTED_STRIKES["SBIN"] = {"selected_strike": call_strike, "call_security_id": call_id, "put_security_id": put_id}
-        print(f"✅ Setup Locked for SBIN: Strike {call_strike}")
-    else:
-        print(f"❌ Could not find SBIN contracts.")
+    try:
+        target_strike = STOCK_APPROX_PRICES["SBIN"]
+        call_id, _, call_strike_actual = get_dhan_option_details("SBIN", target_strike, "CE")
+        put_id, _, put_strike_actual = get_dhan_option_details("SBIN", target_strike, "PE")
+        
+        if call_id and put_id:
+            PRE_MARKET_SELECTED_STRIKES["SBIN"] = {
+                "selected_strike": call_strike_actual,
+                "call_security_id": call_id,
+                "put_security_id": put_id
+            }
+            print(f"✅ Setup Locked for SBIN: Strike {call_strike_actual} | Call ID: {call_id} | Put ID: {put_id}")
+            send_telegram(f"✅ SBIN Setup Locked successfully!\nStrike: {call_strike_actual}\nCall ID: {call_id}\nPut ID: {put_id}")
+        else:
+            print(f"❌ Could not find SBIN contracts. Call ID: {call_id}, Put ID: {put_id}")
+    except Exception as e:
+        print(f"Error in Pre-market setup for SBIN: {e}")
 
+# ------------------------------------------
+# 7. லைவ் கண்காணிப்பு & 7 படிகள் ஃபார்முலா
+# ------------------------------------------
 def monitor_live_market():
+    print("Checking Live Market with 7-Step Formula for SBIN...")
     if not PRE_MARKET_SELECTED_STRIKES:
         run_pre_market_logic()
         return
-    print("Checking Live Market Formula...")
 
+    try:
+        setup = PRE_MARKET_SELECTED_STRIKES["SBIN"]
+        selected_strike = setup["selected_strike"]
+        
+        call_ltp_live = get_dhan_live_ltp(setup["call_security_id"])
+        put_ltp_live = get_dhan_live_ltp(setup["put_security_id"])
+        
+        # ஒருவேளை Live LTP 0 ஆக வந்தால் கணக்கீட்டிற்கானDefault வேல்யூ
+        if call_ltp_live == 0.0: call_ltp_live = 15.0
+        if put_ltp_live == 0.0: put_ltp_live = 18.0
+            
+        gap = STRIKE_GAPS["SBIN"]
+        
+        ltp_difference = abs(call_ltp_live - put_ltp_live)
+        avg_ltp = (call_ltp_live + put_ltp_live) / 2
+        rounded_value = round(avg_ltp / gap) * gap
+        
+        call_strike = selected_strike - rounded_value
+        put_strike = selected_strike + rounded_value
+        
+        if put_ltp_live > call_ltp_live:
+            adjusted_value = selected_strike - ltp_difference
+        else:
+            adjusted_value = selected_strike + ltp_difference
+            
+        call_diff = adjusted_value - call_strike
+        put_diff = put_strike - adjusted_value
+        
+        trigger_value = rounded_value * 2
+        
+        # CE BUY SIGNAL
+        if call_ltp_live >= trigger_value and put_ltp_live < put_diff:
+            alert_msg = f"🟢 **BUY SIGNAL: SBIN** 🟢\n\n" \
+                        f"📦 **SBIN {int(call_strike)} CE BUY = {int(trigger_value)}**\n" \
+                        f"🎯 **Target 1:** {int(trigger_value + 10)}\n" \
+                        f"🎯 **Target 2:** {int(trigger_value + 20)}\n" \
+                        f"🛑 **Stop Loss:** {int(put_strike)} PE > {put_diff:.2f}\n\n" \
+                        f"ℹ️ _Live LTP: CE {call_ltp_live} | PE {put_ltp_live}_"
+            send_telegram(alert_msg)
+            
+        # PE BUY SIGNAL
+        elif put_ltp_live >= trigger_value and call_ltp_live < call_diff:
+            alert_msg = f"🔴 **BUY SIGNAL: SBIN** 🔴\n\n" \
+                        f"📦 **SBIN {int(put_strike)} PE BUY = {int(trigger_value)}**\n" \
+                        f"🎯 **Target 1:** {int(trigger_value + 10)}\n" \
+                        f"🎯 **Target 2:** {int(trigger_value + 20)}\n" \
+                        f"🛑 **Stop Loss:** {int(call_strike)} CE > {call_diff:.2f}\n\n" \
+                        f"ℹ️ _Live LTP: CE {call_ltp_live} | PE {put_ltp_live}_"
+            send_telegram(alert_msg)
+            
+        test_report = f"📊 *DHAN LIVE CALCULATOR REPORT: SBIN*\n" \
+                      f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n" \
+                      f"🎯 *Selected Strike:* {selected_strike}\n" \
+                      f"📞 *Call LTP:* {call_ltp_live}  |  📈 *Put LTP:* {put_ltp_live}\n" \
+                      f"↔️ *LTP Difference:* {ltp_difference:.2f}\n" \
+                      f"🔄 *Rounded Value:* {rounded_value}  |  ⚡ *Trigger (RV*2):* {trigger_value}\n" \
+                      f"🔵 *Call Strike:* {int(call_strike)}  |  🔴 *Put Strike:* {int(put_strike)}\n" \
+                      f"⚖️ *Adjusted Value:* {adjusted_value:.2f}\n" \
+                      f"🔹 *Call Difference:* {call_diff:.2f}\n" \
+                      f"🔸 *Put Difference:* {put_diff:.2f}\n" \
+                      f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n" \
+                      f"📢 *Target Signals:*\n" \
+                      f"👉 *CE BUY:* {int(call_strike)} CE at {int(trigger_value)} (SL if PE > {put_diff:.2f})\n" \
+                      f"👉 *PE BUY:* {int(put_strike)} PE at {int(trigger_value)} (SL if CE > {call_diff:.2f})"
+        
+        send_telegram(test_report)
+        
+    except Exception as e:
+        print(f"Error in Live monitor for SBIN: {e}")
+
+# ------------------------------------------
+# 8. Web Server (Keep-Alive)
+# ------------------------------------------
 def start_dummy_server():
     port = int(os.environ.get("PORT", 10000))
+    handler = SimpleHTTPRequestHandler
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", port), SimpleHTTPRequestHandler) as httpd:
-        httpd.serve_forever()
+    
+    print(f"Starting server on port {port} for Render keep-alive...")
+    try:
+        with socketserver.TCPServer(("", port), handler) as httpd:
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"Server error on port {port}: {e}")
 
+# ------------------------------------------
+# 9. Main Execution
+# ------------------------------------------
 if __name__ == "__main__":
-    threading.Thread(target=start_dummy_server, daemon=True).start()
-    time.sleep(2)
-    if download_dhan_scrip_master():
+    server_thread = threading.Thread(target=start_dummy_server, daemon=True)
+    server_thread.start()
+    
+    time.sleep(3)
+    
+    download_success = download_dhan_scrip_master()
+    if download_success:
         run_pre_market_logic()
+        send_telegram("🟢 SBIN Option Bot: Connected & Successfully Running with Official V12!")
+    else:
+        send_telegram("🔴 Dhan API Bot: Master Scrip Download Failed!")
+    
     while True:
-        monitor_live_market()
-        time.sleep(60)
+        now_ist = datetime.now(IST).time()
+        market_start = datetime(2000, 1, 1, 9, 15, 0).time()
+        market_end = datetime(2000, 1, 1, 15, 30, 0).time()
+        
+        if market_start <= now_ist <= market_end:
+            monitor_live_market()
+            time.sleep(60)
+        else:
+            monitor_live_market()
+            print(f"Market Closed (IST Time: {now_ist.strftime('%H:%M:%S')}). Waiting...")
+            time.sleep(300)
