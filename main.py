@@ -23,7 +23,7 @@ STRIKE_GAPS = {"SBIN": 10}
 PRE_MARKET_SELECTED_STRIKES = {}
 DHAN_MASTER_DF = None
 
-# காலம் மேப்பிங்ஸ்
+# காலம் மேப்பிங்ஸ் (கண்டிப்பான இயல்புநிலை மதிப்புகள்)
 COL_TOKEN = "SEM_SMART_TOKEN"         
 COL_INST_NAME = "SEM_INSTRUMENT_NAME"  
 COL_UNDERLYING = "SEM_TRADING_SYMBOL"  
@@ -63,6 +63,7 @@ def download_dhan_scrip_master():
             
             print("Dhan Scrip Master Downloaded Successfully!")
             
+            # துல்லியமான காலம் கண்டறிதல் மாடல்
             for col in df.columns:
                 col_upper = col.upper()
                 if "SMART_TOKEN" in col_upper or "SEM_SMART_TOKEN" in col_upper or col_upper == "SECURITY_ID":
@@ -78,6 +79,7 @@ def download_dhan_scrip_master():
                 elif "CUSTOM_CLOSE" in col_upper or "SEM_CUSTOM_CLOSE" in col_upper or "CLOSE" in col_upper:
                     COL_CLOSE = col
             
+            print(f"Columns Mapped -> Token: {COL_TOKEN}, Inst: {COL_INST_NAME}, Strike: {COL_STRIKE}")
             return True
         else:
             print("Failed to download Scrip Master from Dhan.")
@@ -87,7 +89,7 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 4. Security ID தேடுதல் (Safe Float conversion)
+# 4. Security ID தேடுதல் (Super Safe Mode)
 # ------------------------------------------
 def get_dhan_option_details(stock_name, target_strike, option_type):
     global DHAN_MASTER_DF, COL_TOKEN, COL_INST_NAME, COL_UNDERLYING, COL_STRIKE, COL_OPTION_TYPE, COL_CLOSE
@@ -95,62 +97,61 @@ def get_dhan_option_details(stock_name, target_strike, option_type):
         return None, 0.0, target_strike
     
     try:
-        token_col = COL_TOKEN if COL_TOKEN in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[0]
-        inst_col = COL_INST_NAME if COL_INST_NAME in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[1]
-        underlying_col = COL_UNDERLYING if COL_UNDERLYING in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[2]
-        strike_col = COL_STRIKE if COL_STRIKE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[3]
-        opt_type_col = COL_OPTION_TYPE if COL_OPTION_TYPE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[4]
-        close_col = COL_CLOSE if COL_CLOSE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[5]
+        # காலம் பெயர்கள் இருப்பதை உறுதி செய்தல்
+        t_col = COL_TOKEN if COL_TOKEN in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[0]
+        i_col = COL_INST_NAME if COL_INST_NAME in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[1]
+        u_col = COL_UNDERLYING if COL_UNDERLYING in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[2]
+        s_col = COL_STRIKE if COL_STRIKE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[3]
+        o_col = COL_OPTION_TYPE if COL_OPTION_TYPE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[4]
+        c_col = COL_CLOSE if COL_CLOSE in DHAN_MASTER_DF.columns else DHAN_MASTER_DF.columns[5]
 
-        # 1. முதலில் OPTSTK/OPTIDX மற்றும் குறிப்பிட்ட பங்கை மட்டும் தனியாகப் பிரிக்கிறோம்
+        # 1. OPTSTK மற்றும் 'SBIN' குறியீட்டை மட்டும் ஃபில்டர் செய்கிறோம்
         df_filter = DHAN_MASTER_DF[
-            (DHAN_MASTER_DF[inst_col].isin(['OPTSTK', 'OPTIDX'])) & 
-            (DHAN_MASTER_DF[underlying_col].str.contains(stock_name, case=False, na=False)) &
-            (DHAN_MASTER_DF[opt_type_col].str.upper() == option_type.upper())
+            (DHAN_MASTER_DF[i_col].isin(['OPTSTK', 'OPTIDX'])) & 
+            (DHAN_MASTER_DF[u_col].str.contains(stock_name, case=False, na=False)) &
+            (DHAN_MASTER_DF[o_col].str.upper() == option_type.upper())
         ].copy()
         
         if df_filter.empty:
             return None, 0.0, target_strike
 
-        # ⭐️ புதிய அதிரடி திருத்தம்: ஸ்ட்ரைக் காலத்தில் இருக்கும் தரவுகளை ஸ்ட்ரிங்காக மாற்றி,
-        # அதில் எண்கள் மற்றும் புள்ளி (.) மட்டுமே இருப்பதை உறுதி செய்துவிட்டு, மீதியை நீக்குகிறோம்.
-        df_filter[strike_col] = df_filter[strike_col].astype(str).str.strip()
+        # ⭐️ 2. இங்கேயே 'BSE' போன்ற டெக்ஸ்டுகளைத் தூக்குகிறோம்
+        # ஸ்ட்ரைக் காலமை ஸ்ட்ரிங்காக மாற்றி, எண்களைத் தவிர மற்ற டெக்ஸ்ட் இருந்தால் அந்த ரோவை நீக்குகிறது
+        df_filter[s_col] = df_filter[s_col].astype(str).str.strip()
+        df_filter = df_filter[df_filter[s_col].str.match(r'^\d+(\.\d+)?$', na=False)]
         
-        # எண்கள் இல்லாத (உதாரணத்திற்கு 'BSE') ரோக்களை முற்றிலும் நீக்குகிறோம்
-        # இந்த ரீஜெக்ஸ் (Regex) எண்களைத் தவிர மற்ற டெக்ஸ்டுகள் இருந்தால் அதை தூக்கிவிடும்
-        df_filter = df_filter[df_filter[strike_col].str.match(r'^\d+(\.\d+)?$', na=False)]
-
-        # இப்போது பாதுகாப்பாக எண்களாக மாற்றலாம், 'BSE' இருக்கவே இருக்காது!
-        df_filter[strike_col] = pd.to_numeric(df_filter[strike_col])
-        df_filter = df_filter.dropna(subset=[token_col, strike_col])
+        # 3. இப்போது பாதுகாப்பாக numeric-ஆக கன்வெர்ட் செய்கிறோம்
+        df_filter[s_col] = pd.to_numeric(df_filter[s_col], errors='coerce')
+        df_filter = df_filter.dropna(subset=[t_col, s_col])
         
         if df_filter.empty:
             return None, 0.0, target_strike
             
-        # டார்கெட் ஸ்ட்ரைக்கிற்கு அருகில் உள்ளதை எடுத்தல்
-        df_filter['strike_diff'] = (df_filter[strike_col] - float(target_strike)).abs()
+        # 4. டார்கெட் ஸ்ட்ரைக்கிற்கு அருகில் உள்ளதை எடுத்தல்
+        df_filter['strike_diff'] = (df_filter[s_col] - float(target_strike)).abs()
         df_sorted = df_filter.sort_values(by='strike_diff')
         
         if not df_sorted.empty:
             row = df_sorted.iloc[0]
             
-            security_id_raw = row.get(token_col)
+            security_id_raw = row.get(t_col)
             if pd.isna(security_id_raw) or security_id_raw is None:
                 return None, 0.0, target_strike
                 
             security_id = int(float(security_id_raw))
             
-            close_raw = row.get(close_col, 0.0)
+            close_raw = row.get(c_col, 0.0)
             close_price = pd.to_numeric(close_raw, errors='coerce')
             close_price = float(close_price) if not pd.isna(close_price) else 0.0
             
-            strike_found = float(row.get(strike_col, target_strike))
+            strike_found = float(row.get(s_col, target_strike))
             
             return security_id, close_price, strike_found
             
     except Exception as e:
-        print(f"Error finding ID for {stock_name}: {e}")
+        print(f"Error finding ID for {stock_name} ({option_type}): {e}")
     return None, 0.0, target_strike
+
 # ------------------------------------------
 # 5. Live LTP API Call (Dhan Credentials)
 # ------------------------------------------
@@ -196,7 +197,7 @@ def run_pre_market_logic():
             }
             print(f"✅ Setup Locked for SBIN: Strike {call_strike_actual}")
         else:
-            print(f"❌ Could not find SBIN contracts. Call: {call_id}, Put: {put_id}")
+            print(f"❌ Could not find SBIN contracts. Call ID: {call_id}, Put ID: {put_id}")
     except Exception as e:
         print(f"Error in Pre-market setup for SBIN: {e}")
 
@@ -216,7 +217,7 @@ def monitor_live_market():
         call_ltp_live = get_dhan_live_ltp(setup["call_security_id"])
         put_ltp_live = get_dhan_live_ltp(setup["put_security_id"])
         
-        # Testing Fallback
+        # Fallback Simulation values for testing off-market
         if call_ltp_live == 0.0:
             call_ltp_live = 15.0
         if put_ltp_live == 0.0:
@@ -282,10 +283,9 @@ def monitor_live_market():
         print(f"Error in Live monitor for SBIN: {e}")
 
 # ------------------------------------------
-# 8. Web Server (Port 10000 Fix for Render)
+# 8. Web Server (Keep-Alive)
 # ------------------------------------------
 def start_dummy_server():
-    # ⭐️ Render அனுப்பும் $PORT என்விரான்மென்ட் வேரியபிளை (Default: 10000) துல்லியமாகப் படிக்கிறது
     port = int(os.environ.get("PORT", 10000))
     handler = SimpleHTTPRequestHandler
     socketserver.TCPServer.allow_reuse_address = True
@@ -301,12 +301,10 @@ def start_dummy_server():
 # 9. Main Execution
 # ------------------------------------------
 if __name__ == "__main__":
-    # Render போர்ட் ஸ்கேன் டைம்அவுட் ஆகாமல் இருக்க, சர்வரை முதலில் ஸ்டார்ட் செய்ய வேண்டும்!
     server_thread = threading.Thread(target=start_dummy_server, daemon=True)
     server_thread.start()
     
-    # 10 விநாடிகள் சர்வர் ஸ்டார்ட் ஆக இடைவெளி கொடுத்துவிட்டு, மற்ற கோடுகளை ரன் செய்கிறோம்
-    time.sleep(10)
+    time.sleep(5)
     
     download_success = download_dhan_scrip_master()
     if download_success:
