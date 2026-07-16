@@ -93,9 +93,9 @@ def download_dhan_scrip_master():
     return False
 
 # ------------------------------------------
-# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.2 Hybrid Adaptor)
+# 3. 🔥 Dhan Market Feed LTP Batch API Call (V15.3 Segment Key Dynamic Router)
 # ------------------------------------------
-def get_dhan_batch_ltp(instruments_list, segment="NSE_FO"):
+def get_dhan_batch_ltp(instruments_list):
     if not ACCESS_TOKEN or not CLIENT_ID or not instruments_list:
         return {}
         
@@ -106,54 +106,51 @@ def get_dhan_batch_ltp(instruments_list, segment="NSE_FO"):
     }
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     
-    payload = {
-        segment: [{"securityId": str(item[0])} for item in instruments_list]
-    }
-    
+    # 🔥 Dhan v2-ன் உண்மையான F&O செக்மென்ட் பெயர்கள் (மாற்று வழிகள்)
+    possible_segments = ["DERIVATIVE", "NSE_DERIVATIVE", "NSE_FO"]
     result_map = {}
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=7)
-        if response.status_code == 200:
-            data = response.json()
+    
+    for segment in possible_segments:
+        payload = {
+            segment: [{"securityId": str(item[0])} for item in instruments_list]
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                resp_data = data.get("data", data.get("Data", {}))
+                
+                print(f"📡 [DEBUG RESPONSE - {segment}] Raw: {str(data)[:250]}")
+                
+                # டேட்டா இருந்தால் மட்டும் ப்ராசஸ் செய்கிறோம்
+                if resp_data and resp_data != {}:
+                    segment_data = resp_data.get(segment, resp_data)
+                    
+                    # Dictionary Mode Parsing
+                    if isinstance(segment_data, dict):
+                        for item in instruments_list:
+                            token_id = int(item[0])
+                            token_info = segment_data.get(str(token_id), segment_data.get(token_id, {}))
+                            if token_info:
+                                ltp = float(token_info.get("ltp", token_info.get("lastPrice", 0.0)))
+                                if ltp > 0:
+                                    result_map[token_id] = ltp
+                                    
+                    # List Mode Parsing (பாதுகாப்பிற்கு)
+                    elif isinstance(segment_data, list):
+                        for node in segment_data:
+                            t_id = node.get("securityId", node.get("SecurityId"))
+                            if t_id:
+                                ltp = float(node.get("ltp", node.get("lastPrice", 0.0)))
+                                result_map[int(t_id)] = ltp
+                                
+                    # ஏதேனும் ஒரு டோக்கன் வேல்யூ கிடைத்துவிட்டால் லூப்பை நிறுத்திக்கொள்ளலாம்
+                    if result_map:
+                        break
+        except Exception as e:
+            print(f"❌ Exception in Segment {segment}: {e}")
             
-            # ⚙️ [DEBUG PRINT] API-ல் இருந்து உண்மையில் என்ன டேட்டா வருகிறது என்று லாக்ஸில் பார்க்கிறோம்.
-            # இது ஒருமுறை ரன் ஆனதும் எங்கு தவறு நடக்கிறது என்று பிடித்துவிடலாம்!
-            print(f"📡 [DEBUG RESPONSE] Full API Raw Output snippet: {str(data)[:300]}")
-            
-            resp_data = data.get("data", data.get("Data", {}))
-            
-            # 🤝 லாஜிக் 1: ரெஸ்பான்ஸ் டிக்ஸ்னரியாக (Key-Value) வந்தால்
-            if isinstance(resp_data, dict):
-                segment_data = resp_data.get(segment, resp_data)
-                if isinstance(segment_data, dict):
-                    for item in instruments_list:
-                        token_id = int(item[0])
-                        token_info = segment_data.get(str(token_id), segment_data.get(token_id, {}))
-                        if token_info:
-                            ltp = float(token_info.get("ltp", token_info.get("lastPrice", 0.0)))
-                            result_map[token_id] = ltp
-                            
-            # 🤝 லாஜிக் 2: ரெஸ்பான்ஸ் ஒரு லிஸ்ட்டாக (List of Objects) வந்தால்
-            if not result_map and isinstance(resp_data, list):
-                for node in resp_data:
-                    t_id = node.get("securityId", node.get("SecurityId"))
-                    if t_id:
-                        ltp = float(node.get("ltp", node.get("lastPrice", 0.0)))
-                        result_map[int(t_id)] = ltp
-                        
-            # 🤝 லாஜிக் 3: மாற்று செக்மென்ட் கீ-ன் உள்ளே லிஸ்ட்டாக இருந்தால்
-            if not result_map and isinstance(resp_data, dict):
-                segment_list = resp_data.get(segment, [])
-                if isinstance(segment_list, list):
-                    for node in segment_list:
-                        t_id = node.get("securityId", node.get("SecurityId"))
-                        if t_id:
-                            ltp = float(node.get("ltp", node.get("lastPrice", 0.0)))
-                            result_map[int(t_id)] = ltp
-        else:
-            print(f"❌ Batch HTTP Error {response.status_code}: {response.text}")
-    except Exception as e:
-        print(f"❌ Exception in Batch LTP Call: {e}")
     return result_map
 
 # ------------------------------------------
@@ -169,7 +166,6 @@ def process_stock_strategy(stock):
         approx_base = STOCK_APPROX_PRICES.get(stock, 1000.0)
         
         inst_type = "OPTIDX" if stock in ["NIFTY", "BANKNIFTY"] else "OPTSTK"
-        api_segment = "NSE_FNO" if stock in ["NIFTY", "BANKNIFTY"] else "NSE_FO"
         
         df_stock = DHAN_MASTER_DF[
             (DHAN_MASTER_DF[COL_INST_NAME] == inst_type) &
@@ -231,9 +227,9 @@ def process_stock_strategy(stock):
             print(f"❌ {stock}: No CE/PE tokens built for current expiry.")
             return
 
-        print(f"📡 Requesting [{api_segment}] Strict Structure for {stock}: Total Tokens: {len(batch_instruments)}")
+        print(f"📡 Requesting Dynamic Segment Structure for {stock}: Total Tokens: {len(batch_instruments)}")
 
-        ltp_data_map = get_dhan_batch_ltp(batch_instruments, segment=api_segment)
+        ltp_data_map = get_dhan_batch_ltp(batch_instruments)
         
         selected_strike = None
         selected_call_ltp = 0.0
@@ -275,7 +271,7 @@ def process_stock_strategy(stock):
                         call_put_diff = diff
 
         if selected_strike is None:
-            print(f"⚠️ {stock}: API response objects mapped to 0.0. Awaiting valid live stream.")
+            print(f"⚠️ {stock}: API Response segment executed but data array empty. Awaiting Live Market Response.")
             return
 
         # 🤝 STEP 3: சராசரி மற்றும் ரவுண்டிங்
@@ -335,7 +331,7 @@ if __name__ == "__main__":
     time.sleep(2)
     
     if download_dhan_scrip_master():
-        send_telegram("🟢 Multi-Stock Bot Activated (V15.2 - Response Adaptive Mode)!")
+        send_telegram("🟢 Multi-Stock Bot Activated (V15.3 - Segment Key Routed)!")
         
     while True:
         now_ist = datetime.now(IST).time()
