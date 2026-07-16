@@ -1,47 +1,39 @@
 import os
-import time
 import requests
-import pandas as pd
-from datetime import datetime, timezone, timedelta
+from flask import Flask
+import threading
 
-# உங்கள் Render-ல் இருக்கும் ENV விபரங்கள்
-CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
-ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
+app = Flask(__name__)
 
-def get_live_price(security_id):
-    """
-    தனுஷ் v2 LTP API-க்கான மிக எளிய மற்றும் வலுவான அணுகுமுறை
-    """
-    url = f"https://api.dhan.co/v2/marketfeed/ltp"
-    headers = {
-        'access-token': ACCESS_TOKEN,
-        'client-id': CLIENT_ID,
-        'Content-Type': 'application/json'
-    }
-    
-    # தனுஷ் v2-ல் NSE_FNO கீயுடன் சரியான ஆப்ஜெக்ட் ஸ்ட்ரக்சர்
-    payload = {
-        "NSE_FNO": [{"securityId": str(security_id)}]
-    }
-    
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+# தனுஷின் சரியான API URL
+DHAN_BASE_URL = "https://api.dhan.co"
+
+def get_dhan_token_details():
+    # இது அனைத்து தனுஷ் இன்ஸ்ட்ருமென்ட்களையும் தரவிறக்கம் செய்யும்
+    url = f"{DHAN_BASE_URL}/instruments"
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            # லாக்ஸில் வரும் டேட்டாவை வைத்து நாம் அடுத்த கட்டத்திற்குச் செல்லலாம்
-            print(f"DEBUG DATA: {data}")
-            return data
-        else:
-            print(f"Error {response.status_code}: {response.text}")
+        response = requests.get(url)
+        # இதில் 814 ஐத் தேடி, அதற்கு இணையான 'dhanSecurityId'-ஐ எடுக்கலாம்
+        return response.json()
     except Exception as e:
-        print(f"Critical Exception: {e}")
-    return None
+        return str(e)
 
 if __name__ == "__main__":
-    print("V17.0 Initialized...")
-    # டெஸ்டிங்கிற்காக SBIN செக்யூரிட்டி ஐடி 814 ஐ மட்டும் முயற்சிப்போம்
-    get_live_price("814")
+    # போர்ட் சிக்கலைத் தீர்க்க Flask சர்வர்
+    port = int(os.environ.get("PORT", 10000))
     
-    # ஆப் எக்ஸிட் ஆகாமல் இருக்க...
-    while True:
-        time.sleep(60)
+    # தனுஷ் ஐடி டிடெக்டர்
+    print("V18.0 Initialized...")
+    
+    # 814 எக்ஸ்சேஞ்ச் ஐடிக்குரிய தனுஷ் ஐடியைக் கண்டறிய முயற்சி
+    # (இது ஒருமுறை மட்டும் ரன் ஆகும்)
+    threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': port}).start()
+    
+    # ஒரு சிறிய டெஸ்ட்
+    print("Fetching full instrument list to resolve IDs...")
+    instruments = get_dhan_token_details()
+    print("Token resolution complete.")
