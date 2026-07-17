@@ -1,31 +1,37 @@
 import requests
 import os
 
-# உங்கள் API விபரங்கள்
 CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
 ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
-def get_atm_data(underlying_id):
-    url = "https://api.dhan.co/v2/optionchain"
+def get_atm_option_data():
+    url = "https://api.dhan.co/charts/v1/optionchain" # இதுதான் Chart API-க்கான சரியான எண்ட்-பாயிண்ட்
     headers = {
         'access-token': ACCESS_TOKEN, 
         'client-id': CLIENT_ID, 
         'Content-Type': 'application/json'
     }
     
-    # குறிப்பிட்ட அண்டர்லையிங் ஐடிக்கான ஆப்ஷன் செயின்
+    # நீங்கள் கொடுத்த பார்மட் படி மாற்றப்பட்ட payload
     payload = {
-        "underlyingScri": underlying_id,
-        "underlyingSeg": "IDX_I" # Index என்றால் IDX_I
+        "exchangeSegment": "NSE_FNO", # ஆப்ஷன்ஸ் என்பதால் NSE_FNO
+        "interval": "1",
+        "securityId": 3045,          # SBIN-ன் Security ID
+        "instrument": "STKOPT",      # ஸ்டாக் ஆப்ஷன் என்பதால் STKOPT
+        "expiryFlag": "MONTH",
+        "expiryCode": 1,
+        "strike": "ATM",             # ATM டேட்டா
+        "drvOptionType": "CALL",     # CALL அல்லது PUT
+        "requiredData": ["open", "high", "low", "close", "oi"], 
+        "fromDate": "2026-07-17",    # இன்றைய தேதி
+        "toDate": "2026-07-17"
     }
     
-    response = requests.post(url, headers=headers, json=payload)
-    data = response.json()
-    
-    # இதில் ATM ஸ்டிரைக் பிரைஸை மட்டும் பிரித்தெடுக்கலாம்
-    # response-ல் 'data' பிரிவில் ஆப்ஷன் செயின் இருக்கும்
-    return data
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        print("✅ CHART API RESPONSE:", response.json())
+    except Exception as e:
+        print(f"❌ Error: {e}")
 
-# பயன்பாடு:
-# Nifty (13) அல்லது BankNifty (12) ஐடியைப் பயன்படுத்தவும்
-print(get_atm_data(13))
+if __name__ == "__main__":
+    get_atm_option_data()
