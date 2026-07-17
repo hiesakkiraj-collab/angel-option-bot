@@ -26,13 +26,17 @@ def fetch_closed_price():
     pe_id = get_security_id_from_csv(1000, "PE")
     
     if not ce_id or not pe_id:
+        print("Security ID missing for 1000 strike!")
         return
 
-    # தனுஷ் Quote API URL
+    # URL-ஐச் சரிபார்க்கவும்
     url = "https://api.dhan.co/quotes/snfe"
-    headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
+    headers = {
+        'access-token': ACCESS_TOKEN, 
+        'client-id': CLIENT_ID, 
+        'Content-Type': 'application/json'
+    }
     
-    # Quote API-க்கு தேவையான payload
     payload = {
         "symbols": [
             {"exchangeSegment": "NSE_FNO", "securityId": ce_id},
@@ -40,14 +44,15 @@ def fetch_closed_price():
         ]
     }
     
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code == 200:
-        data = response.json().get("data", {})
-        # Quote API-ல் 'lastPrice' அல்லது 'closePrice' என்று வரும்
-        ce_price = data.get(ce_id, {}).get("lastPrice")
-        pe_price = data.get(pe_id, {}).get("lastPrice")
-        print(f"📊 CLOSED PRICE: CE (1000): {ce_price} | PE (1000): {pe_price}")
-    else:
-        print("API Error:", response.text)
-
-# (run_dummy_server மற்றும் main loop பகுதி அப்படியே இருக்கட்டும்)
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        if response.status_code == 200:
+            data = response.json().get("data", {})
+            # ID-யை string ஆக எடுத்துக்கொள்ளலாம்
+            ce_price = data.get(ce_id, {}).get("lastPrice")
+            pe_price = data.get(pe_id, {}).get("lastPrice")
+            print(f"📊 CLOSED PRICE: CE (1000): {ce_price} | PE (1000): {pe_price}")
+        else:
+            print("API Error:", response.status_code, response.text)
+    except Exception as e:
+        print(f"Connection Error: {e}")
