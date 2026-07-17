@@ -1,20 +1,22 @@
-import os
 import requests
 import pandas as pd
 import io
 
-def get_real_dhan_id():
+def find_sbin_data():
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-    response = requests.get(url, timeout=30)
+    response = requests.get(url)
     df = pd.read_csv(io.StringIO(response.text), low_memory=False)
     
-    # 🎯 V22.0: செக்மென்ட் மற்றும் சிம்பல் வைத்து சரியான வரியைத் தேடுதல்
-    # NSE Equity-ல் SBIN ஐ தேடுவோம்
-    sbin_row = df[(df['SM_SYMBOL_NAME'] == 'SBIN') & (df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SEGMENT'] == 'C')]
-    
-    # இங்கே ஒரு 'dhanSecurityId' காலம் இருக்கிறதா என்று பார்ப்போம்
-    print("Columns found in DF:", df.columns.tolist())
-    print("SBIN Data:\n", sbin_row[['SEM_TRADING_SYMBOL', 'SEM_SMST_SECURITY_ID']])
+    # SBIN என்ற வார்த்தை எந்தெந்த காலமில் இருக்கிறது என்று பார்ப்போம்
+    print("Searching for 'SBIN' in all columns...")
+    for col in df.columns:
+        # SBIN என்ற வார்த்தை அந்த காலமில் இருக்கிறதா என்று பார்ப்போம்
+        matches = df[df[col].astype(str).str.contains("SBIN", na=False)]
+        if not matches.empty:
+            print(f"Found match in column: {col}")
+            # அந்த வரியின் முதல் 5 முடிவுகளை பிரிண்ட் செய்
+            print(matches[[col, 'SEM_SMST_SECURITY_ID']].head())
+            break
 
 if __name__ == "__main__":
-    get_real_dhan_id()
+    find_sbin_data()
