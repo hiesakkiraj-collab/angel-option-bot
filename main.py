@@ -10,12 +10,20 @@ ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
 # CSV-லிருந்து Security ID எடுக்கும் பங்க்ஷன்
 def get_security_id_from_csv(strike, option_type):
-    df = pd.read_csv('api-scrip-master-detailed.csv')
-    # ஸ்ட்ரைக் மற்றும் CE/PE வைத்து தேடுகிறது
-    filtered = df[(df['STRIKE'] == strike) & (df['SYMBOL_NAME'].str.contains(option_type))]
-    if not filtered.empty:
-        return str(filtered['SECURITY_ID'].iloc[0])
-    return None
+    try:
+        # low_memory=False சேர்த்தால் தான் பெரிய ஃபைல் கரெக்டாக லோட் ஆகும்
+        df = pd.read_csv('api-scrip-master-detailed.csv', low_memory=False)
+        
+        # ஸ்ட்ரைக் மற்றும் CE/PE வைத்து தேடுகிறது (STRIKE_PRICE காலத்தை பயன்படுத்துகிறோம்)
+        filtered = df[(df['STRIKE_PRICE'] == strike) & (df['SYMBOL_NAME'].str.contains(option_type))]
+        
+        if not filtered.empty:
+            return str(filtered['SECURITY_ID'].iloc[0])
+        else:
+            return None
+    except Exception as e:
+        print(f"Error in CSV reading: {e}")
+        return None
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 10000))
@@ -31,6 +39,10 @@ def fetch_data():
     ce_id = get_security_id_from_csv(800.0, "CE")
     pe_id = get_security_id_from_csv(800.0, "PE")
     
+    if not ce_id or not pe_id:
+        print("Security ID not found for strike 800!")
+        return
+
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
     payload = {
@@ -43,7 +55,9 @@ def fetch_data():
     response = requests.post(url, headers=headers, json=payload)
     if response.status_code == 200:
         data = response.json().get("data", {})
-        print(f"📈 CE Price: {data.get(ce_id, {}).get('ltp')} | 📉 PE Price: {data.get(pe_id, {}).get('ltp')}")
+        ce_price = data.get(ce_id, {}).get("ltp")
+        pe_price = data.get(pe_id, {}).get("ltp")
+        print(f"📈 CE Price (800): {ce_price} | 📉 PE Price (800): {pe_price}")
     else:
         print("API Error:", response.text)
 
@@ -53,5 +67,5 @@ if __name__ == "__main__":
         try:
             fetch_data()
         except Exception as e:
-            print(f"Error: {e}")
-        time.sleep(10)
+            print(f"Error in main loop: {e}")
+        time.sleep(60) # 1 நிமிடம் இடைவெளி
