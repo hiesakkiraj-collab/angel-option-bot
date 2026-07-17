@@ -42,8 +42,10 @@ def fetch_sbi_atm_options():
     
     # SBIN (3045) Equity Option Chain Request
     payload = {
-        "symbol": "SBIN",
-        "exchangeSegment": "NSE_EQ"
+        "underlyingScri": 55263,  # இது SBI-ன் FNO Underlying ID
+        "underlyingSeg": "NSE_FNO", # NSE_EQ-க்கு பதிலாக NSE_FNO
+        "strike": "ATM",
+        "expiryFlag": "MONTH"
     }
     
     try:
