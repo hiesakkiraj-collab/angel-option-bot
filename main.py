@@ -1,32 +1,31 @@
+import requests
 import os
-import time
-from dhanhq.marketfeed import DhanFeed
 
-# Render Environment Variables-ல் இருந்து விபரங்களை எடுக்கிறது
-client_id = os.environ.get("DHAN_CLIENT_ID")
-access_token = os.environ.get("DHAN_ACCESS_TOKEN")
+# உங்கள் API விபரங்கள்
+CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
+ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
-def get_live_market_data():
-    # 3045 = SBIN (NSE Equity)
-    # WebSocket-க்கு செக்மென்ட் மற்றும் செக்யூரிட்டி ஐடி அவசியம்
-    instruments = [("NSE_EQ", 3045)] 
+def get_atm_data(underlying_id):
+    url = "https://api.dhan.co/v2/optionchain"
+    headers = {
+        'access-token': ACCESS_TOKEN, 
+        'client-id': CLIENT_ID, 
+        'Content-Type': 'application/json'
+    }
     
-    def on_connect(instance):
-        instance.subscribe(instruments)
-        print("✅ Connected to Dhan Feed!")
-        
-    def on_message(instance, message):
-        print("📊 RECEIVED DATA:", message)
+    # குறிப்பிட்ட அண்டர்லையிங் ஐடிக்கான ஆப்ஷன் செயின்
+    payload = {
+        "underlyingScri": underlying_id,
+        "underlyingSeg": "IDX_I" # Index என்றால் IDX_I
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    data = response.json()
+    
+    # இதில் ATM ஸ்டிரைக் பிரைஸை மட்டும் பிரித்தெடுக்கலாம்
+    # response-ல் 'data' பிரிவில் ஆப்ஷன் செயின் இருக்கும்
+    return data
 
-    # DhanFeed-ஐ ரன் செய்கிறோம்
-    dhan = DhanFeed(client_id, access_token, instruments, on_connect, on_message)
-    dhan.run_forever()
-
-if __name__ == "__main__":
-    # ஆப் வெளியேறாமல் இருக்க மெயின் லூப்
-    try:
-        get_live_market_data()
-        while True:
-            time.sleep(1)
-    except Exception as e:
-        print(f"❌ Error in main loop: {e}")
+# பயன்பாடு:
+# Nifty (13) அல்லது BankNifty (12) ஐடியைப் பயன்படுத்தவும்
+print(get_atm_data(13))
