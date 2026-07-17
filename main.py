@@ -11,23 +11,14 @@ ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 def get_security_id_from_csv(strike, option_type):
     try:
         df = pd.read_csv('api-scrip-master-detailed.csv', low_memory=False)
-        
-        # ஸ்ட்ரைக் விலையை இன்டிஜராக மாற்றுகிறோம்
         target_strike = int(strike)
         
-        # லாக்ஸில் என்ன நடக்கிறது என்று பார்க்க ஒரு பிரிண்ட்
-        print(f"DEBUG: Searching for Strike={target_strike}, Type={option_type}")
-        
-        # CSV-ல் தேடுகிறோம்
+        # 1000 ஸ்ட்ரைக் பிரைஸை தேடுகிறது
         filtered = df[(df['STRIKE_PRICE'] == target_strike) & (df['SYMBOL_NAME'].str.contains(option_type))]
         
         if not filtered.empty:
-            found_id = str(filtered['SECURITY_ID'].iloc[0])
-            print(f"DEBUG: Found ID: {found_id}")
-            return found_id
+            return str(filtered['SECURITY_ID'].iloc[0])
         else:
-            # ஒருவேளை கிடைக்கவில்லை என்றால் என்ன இருக்கிறது என்று பார்க்க
-            print(f"DEBUG: No data found for {target_strike} {option_type}")
             return None
     except Exception as e:
         print(f"Error in CSV reading: {e}")
@@ -43,29 +34,32 @@ def run_dummy_server():
     HTTPServer(('', port), MyHandler).serve_forever()
 
 def fetch_data():
-    # 800 ஸ்ட்ரைக் விலைக்காகத் தேடுகிறோம்
-    ce_id = get_security_id_from_csv(800, "CE")
-    pe_id = get_security_id_from_csv(800, "PE")
+    # இங்கே 1000 என்று மாற்றியுள்ளேன்
+    ce_id = get_security_id_from_csv(1000, "CE")
+    pe_id = get_security_id_from_csv(1000, "PE")
     
     if not ce_id or not pe_id:
-        print("Security ID missing. Check Debug logs above!")
+        print("Security ID missing for 1000 strike!")
         return
 
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
+    
+    # integer ஆக மாற்றி அனுப்புகிறோம்
     payload = {
         "symbols": [
-            {"exchangeSegment": "NSE_FNO", "securityId": ce_id},
-            {"exchangeSegment": "NSE_FNO", "securityId": pe_id}
+            {"exchangeSegment": "NSE_FNO", "securityId": int(ce_id)},
+            {"exchangeSegment": "NSE_FNO", "securityId": int(pe_id)}
         ]
     }
     
     response = requests.post(url, headers=headers, json=payload)
     if response.status_code == 200:
         data = response.json().get("data", {})
-        ce_price = data.get(ce_id, {}).get("ltp")
-        pe_price = data.get(pe_id, {}).get("ltp")
-        print(f"✅ SUCCESS: CE Price: {ce_price} | PE Price: {pe_price}")
+        # integer key-வை வைத்து எடுக்கிறோம்
+        ce_price = data.get(int(ce_id), {}).get("ltp")
+        pe_price = data.get(int(pe_id), {}).get("ltp")
+        print(f"✅ SUCCESS: CE Price (1000): {ce_price} | PE Price (1000): {pe_price}")
     else:
         print("API Error:", response.text)
 
