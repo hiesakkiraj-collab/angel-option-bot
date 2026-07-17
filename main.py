@@ -42,7 +42,7 @@ def fetch_sbi_atm_options():
     
     # SBIN (3045) Equity Option Chain Request
     payload = {
-        "underlyingScri": 3045,
+        "underlyingScri": 55263,  # SBI-ன் சரியான Underlying Security ID இதுவாகத்தான் இருக்கும்
         "underlyingSeg": "NSE_EQ"
     }
     
