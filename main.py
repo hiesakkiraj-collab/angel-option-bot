@@ -11,15 +11,16 @@ ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 # CSV-லிருந்து Security ID எடுக்கும் பங்க்ஷன்
 def get_security_id_from_csv(strike, option_type):
     try:
-        # low_memory=False சேர்த்தால் தான் பெரிய ஃபைல் கரெக்டாக லோட் ஆகும்
         df = pd.read_csv('api-scrip-master-detailed.csv', low_memory=False)
         
-        # ஸ்ட்ரைக் மற்றும் CE/PE வைத்து தேடுகிறது (STRIKE_PRICE காலத்தை பயன்படுத்துகிறோம்)
-        filtered = df[(df['STRIKE_PRICE'] == strike) & (df['SYMBOL_NAME'].str.contains(option_type))]
+        # ஸ்ட்ரைக் மற்றும் ஆப்ஷன் டைப் இரண்டையும் சரியாக பில்டர் செய்கிறோம்
+        # '800' ஆக இருக்கலாம் என்பதால் int(strike) என்று மாற்றுகிறேன்
+        filtered = df[(df['STRIKE_PRICE'] == int(strike)) & (df['SYMBOL_NAME'].str.contains(option_type))]
         
         if not filtered.empty:
             return str(filtered['SECURITY_ID'].iloc[0])
         else:
+            print(f"DEBUG: Security ID not found for {strike} {option_type}")
             return None
     except Exception as e:
         print(f"Error in CSV reading: {e}")
