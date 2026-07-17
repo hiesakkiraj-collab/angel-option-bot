@@ -4,7 +4,7 @@ import requests
 CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
 ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
-def get_dhan_ltp_final():
+def get_live_data():
     url = "https://api.dhan.co/v2/marketfeed/ltp"
     headers = {
         'access-token': ACCESS_TOKEN, 
@@ -12,12 +12,16 @@ def get_dhan_ltp_final():
         'Content-Type': 'application/json'
     }
     
-    # 🎯 அனைத்து செக்மென்ட்டையும் ஒரே நேரத்தில் அனுப்பி டேட்டாவைப் பிடிப்போம்
+    # 🎯 தனுஷ் v2-ன் புதிய பார்மட்:
+    # 1. 'instruments' கீயைப் பயன்படுத்த வேண்டும்
+    # 2. NSE_EQ செக்மென்ட்டிற்கு 3045 ஐடியைப் பயன்படுத்துவோம் (Equity SBIN)
     payload = {
-        "NSE_FNO": [{"securityId": 1136312}],
-        "NSE_FO": [{"securityId": 1136312}],
-        "NSE_EQ": [{"securityId": 3045}],
-        "BSE_EQ": [{"securityId": 3045}]
+        "instruments": [
+            {
+                "exchangeSegment": "NSE_EQ",
+                "securityId": "3045"
+            }
+        ]
     }
     
     try:
@@ -27,4 +31,4 @@ def get_dhan_ltp_final():
         print(f"Error: {e}")
 
 if __name__ == "__main__":
-    get_dhan_ltp_final()
+    get_live_data()
