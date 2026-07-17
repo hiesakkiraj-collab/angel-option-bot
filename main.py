@@ -12,62 +12,42 @@ def get_security_id_from_csv(strike, option_type):
     try:
         df = pd.read_csv('api-scrip-master-detailed.csv', low_memory=False)
         target_strike = int(strike)
-        
-        # 1000 ஸ்ட்ரைக் பிரைஸை தேடுகிறது
         filtered = df[(df['STRIKE_PRICE'] == target_strike) & (df['SYMBOL_NAME'].str.contains(option_type))]
         
         if not filtered.empty:
             return str(filtered['SECURITY_ID'].iloc[0])
-        else:
-            return None
+        return None
     except Exception as e:
-        print(f"Error in CSV reading: {e}")
+        print(f"Error: {e}")
         return None
 
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    class MyHandler(SimpleHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Bot is running!")
-    HTTPServer(('', port), MyHandler).serve_forever()
-
-def fetch_data():
-    # இங்கே 1000 என்று மாற்றியுள்ளேன்
+def fetch_closed_price():
     ce_id = get_security_id_from_csv(1000, "CE")
     pe_id = get_security_id_from_csv(1000, "PE")
     
     if not ce_id or not pe_id:
-        print("Security ID missing for 1000 strike!")
         return
 
-    url = "https://api.dhan.co/v2/marketfeed/ltp"
+    # தனுஷ் Quote API URL
+    url = "https://api.dhan.co/quotes/snfe"
     headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
     
-    # integer ஆக மாற்றி அனுப்புகிறோம்
+    # Quote API-க்கு தேவையான payload
     payload = {
         "symbols": [
-            {"exchangeSegment": "NSE_FNO", "securityId": int(ce_id)},
-            {"exchangeSegment": "NSE_FNO", "securityId": int(pe_id)}
+            {"exchangeSegment": "NSE_FNO", "securityId": ce_id},
+            {"exchangeSegment": "NSE_FNO", "securityId": pe_id}
         ]
     }
     
     response = requests.post(url, headers=headers, json=payload)
     if response.status_code == 200:
         data = response.json().get("data", {})
-        # integer key-வை வைத்து எடுக்கிறோம்
-        ce_price = data.get(int(ce_id), {}).get("ltp")
-        pe_price = data.get(int(pe_id), {}).get("ltp")
-        print(f"✅ SUCCESS: CE Price (1000): {ce_price} | PE Price (1000): {pe_price}")
+        # Quote API-ல் 'lastPrice' அல்லது 'closePrice' என்று வரும்
+        ce_price = data.get(ce_id, {}).get("lastPrice")
+        pe_price = data.get(pe_id, {}).get("lastPrice")
+        print(f"📊 CLOSED PRICE: CE (1000): {ce_price} | PE (1000): {pe_price}")
     else:
         print("API Error:", response.text)
 
-if __name__ == "__main__":
-    threading.Thread(target=run_dummy_server, daemon=True).start()
-    while True:
-        try:
-            fetch_data()
-        except Exception as e:
-            print(f"Error in main loop: {e}")
-        time.sleep(60)
+# (run_dummy_server மற்றும் main loop பகுதி அப்படியே இருக்கட்டும்)
