@@ -8,7 +8,7 @@ access_token = os.environ.get("DHAN_ACCESS_TOKEN")
 # இது தான் தனுஷ் கொடுக்கும் அதிகாரப்பூர்வ வழி
 def get_live_market_data():
     # 3045 = SBIN (NSE Equity)
-    instruments = [(marketfeed.NSE, 3045)] 
+    instruments = [(marketfeed.NSE_EQ, 3045)] 
     
     def on_connect(instance):
         instance.subscribe(instruments)
