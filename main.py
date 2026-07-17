@@ -45,7 +45,13 @@ def fetch_closed_price():
         return
 
     url = "https://api.dhan.co/quotes/snfe"
-    headers = {'access-token': ACCESS_TOKEN, 'client-id': CLIENT_ID, 'Content-Type': 'application/json'}
+    # Content-Type மற்றும் பிற ஹெடர்களைச் சரியாகச் சேர்த்துள்ளேன்
+    headers = {
+        'access-token': ACCESS_TOKEN, 
+        'client-id': CLIENT_ID, 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    }
     payload = {
         "symbols": [
             {"exchangeSegment": "NSE_FNO", "securityId": ce_id},
@@ -55,13 +61,15 @@ def fetch_closed_price():
     
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=10)
+        # ரெஸ்பான்ஸ் ஸ்டேட்டஸைப் பார்ப்போம்
         if response.status_code == 200:
             data = response.json().get("data", {})
             ce_price = data.get(ce_id, {}).get("lastPrice")
             pe_price = data.get(pe_id, {}).get("lastPrice")
             print(f"📊 CLOSED PRICE: CE(1000): {ce_price} | PE(1000): {pe_price}")
         else:
-            print(f"API Error: {response.status_code}")
+            # பிழை ஏற்பட்டால் என்ன மெசேஜ் வருகிறது என்று பார்ப்போம்
+            print(f"API Error Code: {response.status_code}, Response: {response.text}")
     except Exception as e:
         print(f"Connection Error: {e}")
 
