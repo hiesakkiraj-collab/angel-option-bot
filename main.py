@@ -42,8 +42,8 @@ def fetch_sbi_atm_options():
     
     # SBIN (3045) Equity Option Chain Request
     payload = {
-        "underlyingScri": 55263,  # SBI-ன் சரியான Underlying Security ID இதுவாகத்தான் இருக்கும்
-        "underlyingSeg": "NSE_EQ"
+        "symbol": "SBIN",
+        "exchangeSegment": "NSE_EQ"
     }
     
     try:
@@ -107,12 +107,12 @@ if __name__ == "__main__":
     # 1. Render போர்ட் எர்ரர் வராமல் இருக்க வெப் சர்வரை பேக்கிரவுண்டில் இயக்குகிறோம்
     threading.Thread(target=run_dummy_server, daemon=True).start()
     
-    # 2. ஒவ்வொரு 10 விநாடிக்கும் மார்க்கெட் டேட்டாவை எடுக்கும் மெயின் லூப்
+    # 2. ஒவ்வொரு 60 விநாடிக்கும் மார்க்கெட் டேட்டாவை எடுக்கும் மெயின் லூப்
     while True:
         try:
             fetch_sbi_atm_options()
             # Dhan API ரேட் லிமிட்டை தவிர்க்க 10 விநாடிகள் இடைவெளி
-            time.sleep(10)
+            time.sleep(60)
         except KeyboardInterrupt:
             print("🛑 Bot stopped by user.")
             break
