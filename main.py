@@ -1,25 +1,32 @@
 import os
-from dhanhq.marketfeed import DhanFeed  # இந்த வரியை மட்டும் கவனமாக மாற்றவும்
+import requests
 
-# Render Environment Variables-ல் இருந்து விபரங்களை எடுக்கும்
-client_id = os.environ.get("DHAN_CLIENT_ID")
-access_token = os.environ.get("DHAN_ACCESS_TOKEN")
+CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
+ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
-def get_live_market_data():
-    # 3045 = SBIN (NSE Equity)
-    # இதில் 'NSE_EQ' என செக்மென்ட்டை நேரடியாக ஸ்டிரிங்காக கொடுப்போம்
-    instruments = [("NSE_EQ", 3045)] 
+def get_live_data_v2():
+    url = "https://api.dhan.co/v2/marketfeed/ltp"
+    headers = {
+        'access-token': ACCESS_TOKEN, 
+        'client-id': CLIENT_ID, 
+        'Content-Type': 'application/json'
+    }
     
-    def on_connect(instance):
-        instance.subscribe(instruments)
-        print("Connected to Dhan Feed!")
-        
-    def on_message(instance, message):
-        print("RECEIVED DATA:", message)
-
-    # நேரடியாக DhanFeed-ஐ பயன்படுத்துகிறோம்
-    dhan = DhanFeed(client_id, access_token, instruments, on_connect, on_message)
-    dhan.run_forever()
+    # 🎯 தனுஷ் v2-ன் தற்போதைய சரியான பார்மட்: 'symbols' கீயைப் பயன்படுத்த வேண்டும்
+    payload = {
+        "symbols": [
+            {
+                "exchangeSegment": "NSE_EQ",
+                "securityId": "3045"
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        print(f"ULTIMATE SUCCESS RESPONSE: {response.text}")
+    except Exception as e:
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
-    get_live_market_data()
+    get_live_data_v2()
