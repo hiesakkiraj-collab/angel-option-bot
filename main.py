@@ -1,58 +1,26 @@
 import os
 import requests
-import threading
-import pandas as pd
 import time
 from http.server import SimpleHTTPRequestHandler, HTTPServer
+import threading
 
-CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
-ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
+# 1. முதலில் சர்வர் ரன் ஆகிறதா என்று பார்ப்போம்
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    print(f"Starting server on port {port}")
+    class MyHandler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot is active!")
+    httpd = HTTPServer(('', port), MyHandler)
+    httpd.serve_forever()
 
-def get_security_id_from_csv(strike, option_type):
-    try:
-        df = pd.read_csv('api-scrip-master-detailed.csv', low_memory=False)
-        target_strike = int(strike)
-        filtered = df[(df['STRIKE_PRICE'] == target_strike) & (df['SYMBOL_NAME'].str.contains(option_type))]
-        
-        if not filtered.empty:
-            return str(filtered['SECURITY_ID'].iloc[0])
-        return None
-    except Exception as e:
-        print(f"Error: {e}")
-        return None
+# 2. த்ரெடிங் மூலம் சர்வரை ஸ்டார்ட் செய்கிறோம்
+threading.Thread(target=run_dummy_server, daemon=True).start()
 
-def fetch_closed_price():
-    ce_id = get_security_id_from_csv(1000, "CE")
-    pe_id = get_security_id_from_csv(1000, "PE")
-    
-    if not ce_id or not pe_id:
-        print("Security ID missing for 1000 strike!")
-        return
-
-    # URL-ஐச் சரிபார்க்கவும்
-    url = "https://api.dhan.co/quotes/snfe"
-    headers = {
-        'access-token': ACCESS_TOKEN, 
-        'client-id': CLIENT_ID, 
-        'Content-Type': 'application/json'
-    }
-    
-    payload = {
-        "symbols": [
-            {"exchangeSegment": "NSE_FNO", "securityId": ce_id},
-            {"exchangeSegment": "NSE_FNO", "securityId": pe_id}
-        ]
-    }
-    
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        if response.status_code == 200:
-            data = response.json().get("data", {})
-            # ID-யை string ஆக எடுத்துக்கொள்ளலாம்
-            ce_price = data.get(ce_id, {}).get("lastPrice")
-            pe_price = data.get(pe_id, {}).get("lastPrice")
-            print(f"📊 CLOSED PRICE: CE (1000): {ce_price} | PE (1000): {pe_price}")
-        else:
-            print("API Error:", response.status_code, response.text)
-    except Exception as e:
-        print(f"Connection Error: {e}")
+# 3. பாட் லாஜிக் (சின்ன டெஸ்ட்)
+print("Bot started, waiting for market data...")
+while True:
+    print("Bot is looping...")
+    time.sleep(60)
