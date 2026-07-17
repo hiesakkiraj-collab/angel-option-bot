@@ -36,11 +36,11 @@ def run_dummy_server():
 
 def fetch_data():
     # உதாரணத்திற்கு 800 ஸ்ட்ரைக்
-    ce_id = get_security_id_from_csv(800.0, "CE")
-    pe_id = get_security_id_from_csv(800.0, "PE")
+    ce_id = get_security_id_from_csv(1000.0, "CE")
+    pe_id = get_security_id_from_csv(1000.0, "PE")
     
     if not ce_id or not pe_id:
-        print("Security ID not found for strike 800!")
+        print("Security ID not found for strike 1000!")
         return
 
     url = "https://api.dhan.co/v2/marketfeed/ltp"
@@ -57,7 +57,7 @@ def fetch_data():
         data = response.json().get("data", {})
         ce_price = data.get(ce_id, {}).get("ltp")
         pe_price = data.get(pe_id, {}).get("ltp")
-        print(f"📈 CE Price (800): {ce_price} | 📉 PE Price (800): {pe_price}")
+        print(f"📈 CE Price (1000): {ce_price} | 📉 PE Price (1000): {pe_price}")
     else:
         print("API Error:", response.text)
 
